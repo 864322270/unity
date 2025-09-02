@@ -1,0 +1,104 @@
+//animationEvent
+//属性 time 时间
+//     functionName 方法名字
+//     stringParameter floatParameter intParameter objectReferenceParameter 方法需要参数
+//     mutable AnimationState* stateSender;mutable AnimatorStateInfo* animatorStateInfo;mutable AnimatorClipInfo* animatorClipInfo; 事件相关参数
+//方法 重写==和 >逻辑
+//方法 FireEventTo static bool FireEventTo(MonoBehaviour& behaviour, AnimationEvent& event, AnimationState* state, AnimatorStateInfo* animatorStateInfo, AnimatorClipInfo* animatorClipInfo, ScriptingMethodPtr method)
+//     触发事件 1.检测物体是否为空 2.设置事件状态 3.检测参数数据是否正确  SetupInvokeArgument函数 4. 接收事件返回值 并确认是否打印日志 5.事件状态设置成空 6.返回true 
+//方法 FireEvent bool FireEvent(AnimationEvent& event, Unity::Component& animation, AnimationState* state, AnimatorStateInfo* animatorStateInfo, AnimatorClipInfo* animatorClipInfo)
+//     触发事件 1.检测物体激活状态 2.获取物体上所有组件继承MonoBehaviour 3.获取要触发的函数指针 ScriptingMethodPtr methodPtr = Scripting::FindMethodCached(behaviour.GetClass(), event.functionName.c_str());
+//     4.if (!methodPtr.IsNull() && FireEventTo(behaviour, event, state, animatorStateInfo, animatorClipInfo, methodPtr)) sent = true;
+//     5.如果事件发送成功返回true 否则输出警告 时间是否为空 和物体名字 6 返回true
+//方法 SetupInvokeArgument static bool SetupInvokeArgument(ScriptingMethodPtr method, AnimationEvent& event, ScriptingArguments& parameters)
+//     1.看看这个方法是否需要参数 2不需要参数直接返回true 3.大于一个参数返回false 4.获取第一个参数 和第一个参数类型 ScriptingTypePtr typeOfFirstArgument = scripting_method_get_nth_argumenttype(method, 0); ScriptingClassPtr classOfFirstArgument = scripting_class_from_type(typeOfFirstArgument);
+//     5.如果是float int string 添加到参数列表中 返回true 6.如果参数是委托 转化成 MonoAnimationEvent 返回true 7.如果参数是 unityobject 或者是子类 转化成object指针 如果不是空 添加到参数列表返回空 如果是继承monobehaviour的 转化成MonoBehaviour指针 
+//     判断是否是空 判断这个类是否继承参数所需要的类 是添加进去 返回true 如果又不是继承monobehaviour的又不是继承unityobject 转换成c++脚本指针 判断是否继承自参数的类 是返回空 都不是返回false
+
+
+//animationState
+//属性 m_Weight 混合权重（0-1） m_Time 真实时间 m_LastGlobalTime 上一帧的全局时间 m_WrappedTime 根据WrapMode函数处理后的时间 
+//     m_Curves 曲线可以在unity中设置 
+//     m_Speed 速度 m_StopTime停止时间 m_Layer 层级 (作用：把基础循环动作放低层（layer 0），把临时/覆盖性动作（如表情、手势、上身动作）放更高层，实现并行与覆盖。 不同 layer 的状态可以并行播放，同一 layer 的状态互斥 混合顺序与权重累积)
+//     m_FadeBlend m_Enabled m_StopWhenFadedOut m_AutoCleanup m_OwnsCurves m_IsFadingOut m_ShouldCleanup m_HasAnimationEvent m_IsClone m_AnimationEventState 一些状态记录
+//     m_AnimationEventState 枚举 状态有 kAnimationEventState_HasEvent 有有效事件 kAnimationEventState_Search 在寻找事件 kAnimationEventState_NotFound 没有有效事件 kAnimationEventState_PausedOnEvent 事件已经触发并暂停 后面用状态代指这个参数
+//     m_AnimationEventIndex 事件索引 m_WrapMode enum { Default = 0, Once = 1, Loop = 2, PingPong = 4, ClampForever = 8 } unity animation中WrapMode参数 可以在unity面板中设置 m_BlendMode; ///< enum { Blend = 0, Additive = 1 }
+//方法 FireEvents bool AnimationState::FireEvents(const float deltaTime, float newWrappedTime, bool forward, Unity::Component& animation, const float beginTime, const float offsetTime, const bool reverseOffsetTime)
+//     修改播放方向从新计算m_time
+//     1.获取所有事件 2.如果当前状态等于kAnimationEventState_Search 设置当前时间 根据动画播放方向 前就找最小的大于当前时间的事件 反之亦然 设置m_AnimationEventIndex 并且把状态设置为kAnimationEventState_HasEvent 如果没找到就把状态设置成kAnimationEventState_NotFound
+//     3.更新速度和时间 4.循环判断 4.1如果m_AnimationEventIndex <0或者超出最大 并且时间不符合需求 推出 4.2 执行animationEvent 中FireEvent函数 
+//     4.3 如果当前状态等于kAnimationEventState_Search 更新旧的方向和新的播放方向 如果方向不同 并且时间一致 判断播放速度是否等于0 说明暂停 m_AnimationEventState改为 kAnimationEventState_PausedOnEvent 速度不等于0 根据方向更改m_AnimationEventIndex 并且m_AnimationEventState = kAnimationEventState_HasEvent;
+//     4.4 根据方向更新 m_AnimationEventIndex 5.返回true 
+//方法 SetSpeed void AnimationState::SetSpeed(float speed)
+//     1.如果状态等于kAnimationEventState_PausedOnEvent 判断方向并且不等于0则 1.1判断m_WrapMode == kWrapModePingPong 一堆计算逻辑 1.2 更新状态为kAnimationEventState_HasEvent
+//     2.状态不等于kAnimationEventState_PausedOnEvent 如果新方向和老方向不相等 把状态改成 kAnimationEventState_Search 3.调用 SetupStopTime函数
+//方法 UpdateAnimationState bool AnimationState::UpdateAnimationState(double globalTime, Unity::Component& animationComponent)
+//     1.更新时间并判断动画速度 2.速度不为零的情况下根据m_WrapMode的模式设置各种事件在满足条件的情况下 FireEvents 3.调用并返回UpdateFading函数
+//方法 UpdateFading bool AnimationState::UpdateFading(float deltaTime) 自动触发基于时间的淡出 处理常规权重渐变
+
+
+//animationClip
+//属性 m_WrapMode 同上面 AnimationEvents  m_Events事件  m_AnimationStates 状态列表 m_MuscleClip 核心动画具体看后面
+//以下属性是只读属性 m_QuaternionCurves m_EulerCurves m_PositionCurves m_ScaleCurves m_PPtrCurves   这些属性可以点击animationclip 在unity Inspector中查看 其中没有说明的属性在m_MuscleClip中
+//从前到后面一次是 有x条使用四元数格式存储的旋转曲线 有x条使用欧拉角格式存储的旋转曲线 有x条位移曲线 有x条缩放曲线  有x条对象引用曲线
+//编辑器下属性 m_EditorCurves m_EulerEditorCurves m_EditModeEvents 保留一份编辑模式下的事件设置副本 以便我们能在播放模式后安全地恢复事件设置
+//方法 GetRange std::pair<float, float> AnimationClip::GetRange() 返回animationclip长度
+//     1.默认设置从-无穷到+无穷 2 如果存在缓存 返回缓存 3遍历所有曲线获取时间范围 4 考虑动画事件的时间 5 缓存结果以提高性能
+//方法 FireAnimationEvents void FireAnimationEvents(AnimationClipEventInfo* info, Unity::Component& source)
+//     1.获取动画事件列表 获取时间相关数据 没有变化直接返回 2 正常播放 循环处理 将时间时间转换到实际时间轴 在时间内触发事件 3 如果是反向播放 就倒着执行第二部
+//方法 SetEvents void AnimationClip::SetEvents(const AnimationEvent* events, int size, bool sort)//最好一次性添加多个事件 
+//     1.添加到新的events中并排序 2.同步编辑器事件到m_EditModeEvents 3.通知动画系统已经修改 4setdirty
+//方法 SetRuntimeEvents void AnimationClip::SetRuntimeEvents(const AnimationEvents& events)
+//     1.获取老的动画长度 2.根据时间排序 3.清除缓存从新计算动画长度 4.如果长度变化较大触发动画系统重建 5.变化不大只通知事件更新
+//方法 AddRuntimeEvent void AnimationClip::AddRuntimeEvent(AnimationEvent& event)     //这是Unity动画系统中用于在运行时动态添加动画事件的核心函数
+//     1.获取老的动画长度 2.根据时间长度判断插入位置 3.清除缓存从新计算动画长度 4.如果长度变化较大触发动画系统重建 5.变化不大只通知事件更新
+//对比 SetRuntimeEvents 和SetEvents  SetRuntimeEvents 不适合在编辑器状态下使用 在代码中有编辑器检查 在1.用户在Animation窗口中添加/删除/修改事件 2.通过Inspector面板修改动画事件 3.导入动画资源时设置事件 4.脚本修改 5.资源导入和序列化 会触发SetEvents 3setevents会同步编辑器数据
+//方法 InitClipMuscleAdditivePose void InitClipMuscleAdditivePose(mecanim::animation::ClipMuscleConstant& constant, mecanim::animation::ClipMuscleConstant& additiveConstant, UnityEngine::Animation::AnimationSetBindings* clipsBindings, float time, RuntimeBaseAllocator& allocator)
+//     看不太懂 猜测处理加载动画的？
+//     还有一些load set get clear 编辑器 等函数 都是一些设置基础参数 曲线 欧拉角等就不多叙述了
+
+//Animation
+//属性 枚举 CullingType kCulling_AlwaysAnimate kCulling_BasedOnRenderers 总是更新动画 仅在有可见渲染器时更新
+//     枚举 PlayMode kStopSameLayer kStopAll 播放新动画时停止同层其他动画 播放新动画时停止所有层的动画
+//     枚举 QueueMode CompleteOthers PlayNow 等其他动画完成后再播放 立即打断并播放
+//     m_WrapMode 包裹模式（Default/Once/Loop/PingPong/ClampForever） m_PlayAutomatically: 是否在激活时自动播放默认动画 m_AnimatePhysics: 是否在FixedUpdate（物理步）更新 m_CullingType: 剔除策略（见上） m_DirtyMask: 脏标记位掩码
+//     m_AnimationManagerNode: 用于加入AnimationManager链表的节点 m_Animation: 默认（主）AnimationClip m_Animations: 挂在组件上的Clip列表
+//方法 IsPlaying() IsPlaying(name)  IsPlaying(const core::string& clip) IsPlayingLayer(int layer) 判断是否在播放
+//方法 Stop() Stop(const core::string& name) Stop(AnimationState& state) 停止所有动画 停止指定名字的（如果是克隆的判断父亲的名字 ）
+//方法 Rewind() Rewind(const core::string& name) Rewind(AnimationState& state) 将动画时间回到起点，不改变播放/权重等其它状态。
+//方法 Play(const core::string& name, PlayMode playMode) Play(AnimationState& fadeIn, PlayMode playMode) Play(PlayMode mode)
+//    1.如果playMode == kPlayQueuedDeprecated 需要排队 调用QueueCrossFade 否则调用CrossFade 不传名字就播放默认
+//方法 Blend() Blend(const core::string& name, float targetWeight, float time)//把指定状态“混到”目标权重，不强制别人降权。常用于多状态叠加。
+//方法 CrossFade() CrossFade(AnimationState& playState, float time, PlayMode mode, bool clearQueuedAnimations) 对“同层”做交叉淡入淡出：目标状态淡入到权重1，其他同层状态淡出到0（或立即Stop）
+//方法 UpdateAnimation UpdateAnimation(double time)
+//     1.遍历 m_SyncedLayers，对每个层调用 SyncLayerTime(layer)，把该层的播放时间对齐到参考层，保证多层节拍一致。 2.为“刚停”的状态准备临时缓存 ALLOC_TEMP_AUTO(stoppedAnimations, m_AnimationStates.size()); 申请一块临时数组，用来记录本帧从“播放态→停止态”的状态指针，后续做善后。
+//     3.逐个 AnimationState 更新 如果是激活状态 调用上面的UpdateAnimationState 若返回 true 表示“刚停止”（到达末尾或被停止）“刚停止”且不需要立刻清理的，先记录到 stoppedAnimations[] stoppedAnimations[stoppedAnimationCount++] = &state;
+//     4.如果该状态本帧会对结果有贡献（权重/遮罩等决定），置 needsUpdate=true，意味着稍后需要混合采样。
+//     5.更新m_DirtyMask 6.如果 state.ShouldAutoCleanupNow() 已播放完且应当自动销毁 m_AnimationStates 列表移除 m_AnimationStates.erase(m_AnimationStates.begin() + i); 否则i++
+//     7.结束循环
+//     8.处理已排队的动画 UpdateQueuedAnimations(needsUpdate)：若有队列且时机到，会把队列里下一个克隆状态推进到播放；若有变化也会把 needsUpdate 置为 true。
+//     9.若 stoppedAnimationCount>0 对每个记录的状态调用 SetupUnstoppedState()，一般用于在采样前把“停止”转成一个可在本帧继续被正确混合的稳定形态 并把 needsUpdate=true，确保稍后会执行采样混合
+//     10.SampleInternal() 内部会重建活跃状态集合、做权重归一、执行 BlendOptimized/Generic/Additive 路径，并应用曲线到目标对象，同时在其中触发 AnimationEvent
+//     11.对“刚停止”的那些状态再调用 CleanupUnstoppedState()
+//方法 UpdateQueuedAnimations UpdateQueuedAnimations(bool& needsUpdate) 这个函数会启动已经到达开始时机的“排队动画 启动时一律使用队列项里的 fadeTime 作为淡入时长。也就是说，即便当前正在播放的动画会更早结束，我们仍然按 fadeTime 去把新动画淡入。选择多长的淡入时长由用户自己控制。
+//     
+
+//AnimationManager
+//属性 m_Animations m_FixedAnimations 都是动画列表 根据m_AnimatePhysics 决定加入那个
+//方法 InitializeClass InitializeClass()
+
+
+
+
+
+//ClipMuscleConstant
+ 
+
+
+//unity是如何触发动画事件的？ 实行顺序是什么
+//     1.PlayerLoop 入口（FixedUpdate）在 AnimationManager.InitializeClass 中注册： FixedUpdate: LegacyFixedAnimationUpdate → GetAnimationManager().Update() PreLateUpdate: LegacyAnimationUpdate → GetAnimationManager().Update()
+//     2.AnimationManager.Update 若使用固定时间步（或 animatePhysics=true 的组件在 fixed 列表）：遍历 m_FixedAnimations 否则遍历 m_Animations 对每个 Animation 组件调用 animation.UpdateAnimation(time)
+//     3.Animation.UpdateAnimation(time)（Legacy Animation） 同步层时间 SyncLayerTime 推进各 AnimationState：state.UpdateAnimationState(time, this) 处理排队 UpdateQueuedAnimations 若需要更新则 SampleInternal()
+//     4.Animation.SampleInternal 重建活跃状态集，做混合 对每个活跃 AnimationState计算该状态上次时间 lastTime 与当前时间 now 如果该状态绑定的 AnimationClip 有事件，则调用：clip.FireAnimationEvents(info, sourceComponent)并填充数据
+//     5.AnimationClip.FireAnimationEvents遍历 clip 的事件列表 根据 lastTime → now 的区间与是否跨圈/反向，决定哪些事件触发 将命中的事件通过消息派发到 sourceComponent（通常是 Animation/Animator 所在的 GameObject 脚本），以 functionName 和参数调用对应方法
+//     总结FixedUpdate → AnimationManager.Update → Animation.UpdateAnimation → SampleInternal → AnimationClip.FireAnimationEvents（Legacy）
