@@ -81,11 +81,23 @@
 //     10.SampleInternal() 内部会重建活跃状态集合、做权重归一、执行 BlendOptimized/Generic/Additive 路径，并应用曲线到目标对象，同时在其中触发 AnimationEvent
 //     11.对“刚停止”的那些状态再调用 CleanupUnstoppedState()
 //方法 UpdateQueuedAnimations UpdateQueuedAnimations(bool& needsUpdate) 这个函数会启动已经到达开始时机的“排队动画 启动时一律使用队列项里的 fadeTime 作为淡入时长。也就是说，即便当前正在播放的动画会更早结束，我们仍然按 fadeTime 去把新动画淡入。选择多长的淡入时长由用户自己控制。
-//     
+//     1.遍历所有等待的动画 如果qa.mode == kStopAll(停止所有动画 当播放新动画时会停止所有层的动画) if (allQueueTime < 0) allQueueTime存储所有动画的剩余播放时间 负值表示尚未计算或需要重新计算 调用GetQueueTimes 具体参考下面
+//     2.
+//方法 GetQueueTimes GetQueueTimes(const Animation::AnimationStates& states, const int targetLayer, float& allQueueTime, float& layerQueueTime) allQueueTime 用于返回所有动画的剩余时间 layerQueueTime返回指定层的剩余时间
+//     1.遍历所有animationstate 并处理所有启动的动画 获取层级 如果state的wrapmode != kWrapModeDefault && wrapMode != kWrapModeClamp 那就是循环 重复播放的 allQueueTime等于无穷 如果由当前层级的一并设置为无穷
+//     2. 等于kWrapModeDefault kWrapModeClamp的计算时间（动画长度-当前时间） allQueueTime等所有的中最大的 由当前层级 更新layerQueueTime 计算逻辑同 allQueueTime
 
 //AnimationManager
 //属性 m_Animations m_FixedAnimations 都是动画列表 根据m_AnimatePhysics 决定加入那个
 //方法 InitializeClass InitializeClass()
+//     1.创建全局 gAnimationManager，注册到 PlayerLoop 两个阶段调用 Update。
+//     2.注册 FixedUpdate 阶段的 LegacyFixedAnimationUpdate 与 PreLateUpdate 阶段的 LegacyAnimationUpdate
+//     3.如果是编辑器模式下 注册一个Domain Reload回调函数在Unity编辑器进行域重载（Domain Reload）之前执行。
+//方法 BeforeDomainReload BeforeDomainReload() 重载前清理所有动画对象的脚本引用，防止悬挂引用导致的问题
+//     1.对清理所有动画对象的脚本引用 （原因）在Unity编辑器中，当脚本重新编译时：旧的应用域被销毁，所有托管对象（C#对象）变成无效 C++对象仍然存在，但它们持有的C#对象引用变成悬挂指针 如果不清理这些引用，当C++代码尝试访问这些引用时会导致崩溃
+//方法 Update Update（）动画系统的核心更新循环 负责驱动所有已注册的动画对象进行更新。
+//     1.获取当前帧的时间戳 2.使用fixtime 就遍历m_FixedAnimations 反之则m_Animations 调用UpdateAnimation （注释补充）在 UpdateAnimation 过程中，可能会触发 AnimationEvent这些事件可能会销毁动画对象导致链表节点被删除 SafeIterator 确保在遍历过程中即使节点被删除也不会崩溃
+
 
 
 
