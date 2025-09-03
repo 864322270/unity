@@ -57,6 +57,7 @@
 //     看不太懂 猜测处理加载动画的？
 //     还有一些load set get clear 编辑器 等函数 都是一些设置基础参数 曲线 欧拉角等就不多叙述了
 
+
 //Animation
 //属性 枚举 CullingType kCulling_AlwaysAnimate kCulling_BasedOnRenderers 总是更新动画 仅在有可见渲染器时更新
 //     枚举 PlayMode kStopSameLayer kStopAll 播放新动画时停止同层其他动画 播放新动画时停止所有层的动画
@@ -90,10 +91,18 @@
 //方法 GetQueueTimes GetQueueTimes(const Animation::AnimationStates& states, const int targetLayer, float& allQueueTime, float& layerQueueTime) allQueueTime 用于返回所有动画的剩余时间 layerQueueTime返回指定层的剩余时间
 //     1.遍历所有animationstate 并处理所有启动的动画 获取层级 如果state的wrapmode != kWrapModeDefault && wrapMode != kWrapModeClamp 那就是循环 重复播放的 allQueueTime等于无穷 如果由当前层级的一并设置为无穷
 //     2. 等于kWrapModeDefault kWrapModeClamp的计算时间（动画长度-当前时间） allQueueTime等所有的中最大的 由当前层级 更新layerQueueTime 计算逻辑同 allQueueTime
+//方法 SampleInternal SampleInternal()负责将动画数据应用到目标对象上
+//     1.验证绑定曲线 曲线相关我看不太懂就不解释了 
+//     2.有脏标记 重建所有状态（添加/删除动画时） 重新排序状态（层变化时）清楚脏标记 
+//     3.重建绑定状态掩码，确定哪些状态影响哪些曲线  通用混合路径 加法混合 在基础动画之上叠加额外效果 通知 Unity 的变换系统有对象发生了变化
+//方法 BlendAdditive() BlendOptimized() BlendGeneric() 这三个函数都是混合动画的把大概 我也看不太懂 
+//     剩下一些看名字就懂得函数  1.物理和剔除相关 SetAnimatePhysics GetAnimatePhysics SetCullingType  GetCullingType
+//     2.生命周期管理 AddToManager RemoveFromManager AwakeFromLoad
+//     3.剪辑管理 AddClip RemoveClip GetClipCount
 //CorssFade Blend QueueCrossFade 这三个函数有什么区别 
 //     1.CrossFade 交叉淡入淡出，实现动画的平滑切换 同一层只保留一个主导动画 调用后立即开始切换  主动停止或淡出其他动画 默认清除同层的排队动画
 //     2.Blend 权重混合，在现有动画基础上叠加效果 多个动画可以同时播放 不停止其他动画调用后立即开始权重变化 不涉及排队机制
-//     3.QueueCrossFade 排队执行交叉淡入淡出 不立即执行，而是排队等待 根据当前动画状态决定何时开始 支持动画序列的编排
+//     3.QueueCrossFade 排队执行交叉淡入淡出 不立即执行，而是排队等待 根据当前动画状态决定何时开始 支持动画序列的编排 
  
 //AnimationManager
 //属性 m_Animations m_FixedAnimations 都是动画列表 根据m_AnimatePhysics 决定加入那个
@@ -107,7 +116,18 @@
 //     1.获取当前帧的时间戳 2.使用fixtime 就遍历m_FixedAnimations 反之则m_Animations 调用UpdateAnimation （注释补充）在 UpdateAnimation 过程中，可能会触发 AnimationEvent这些事件可能会销毁动画对象导致链表节点被删除 SafeIterator 确保在遍历过程中即使节点被删除也不会崩溃
 
 
-
+//animator
+//属性 m_IsInitialized 是否初始化完成 m_Visible是否有相关渲染器可见 m_CullingMode: 剔除模式（不剔除/限制写回/完全剔除） m_UpdateMode: 更新时间源（Normal/AnimatePhysics/UnscaledTime）m_AnimatorActivePasses: 当前处于哪些内部评估阶段的位标记
+//     m_Controller: 当前RuntimeAnimatorController m_ControllerPlayable: 控制器的Playable包装 m_ControllerPlayableCache/m_ControllerPlayableCacheLayerCount: 控制器Playable缓存及其层数 
+//     m_ApplyRootMotion: 是否应用根运动 m_Speed: 全局播放速度  m_LogWarnings: 是否记录警告 m_FireEvents: 是否触发动画事件 m_HasAnimationEvents 是否存在动画事件 m_KeepAnimatorControllerStateOnDisable: 禁用时是否保留控制器状态 m_HasTransformHierarchy: 是否存在可遍历的Transform层级（优化相关）
+//     m_AvatarPlayback: Avatar回放控制结构 m_RecorderMode: 录制模式（离线/回放/录制）m_PlaybackDeltaTime: 回放步长 m_PlaybackTime: 回放时间（查询）
+//方法 SetRuntimeAnimatorController SetRuntimeAnimatorController(RuntimeAnimatorController* controller)
+//     1.如果是同一个直接返回 2.获取新的和旧的控制器并比较 如果playable为空或者 avatar还没初始化 fullRebind等于true（需要重绑定）3.更新控制器
+//     4.如果需要重新绑定 清掉之前备份的“默认属性值” 做一次完整 Rebind 5.不需要重新绑定 把控制器默认值写回（不打脏）清空旧控制器的依赖用户关系 把当前 Animator 作为 AOC 的“用户”注册 依赖跟踪 资源变更可通知 把AOC应用到现有控制器Playable 替换片段映射
+//     5.setdirty
+//方法 Rebind Rebind(bool writeDefaultValues /* = true */)
+//     1.加一段性能采样，便于 Profiler 里看到 Rebind 的耗时 2.只有在允许写默认值时执行下面两步；注释提示：从资源加载唤醒时一般不写默认值，避免覆盖场景里已存在的数值  WriteDefaultValuesNoDirty 清空当前控制器的 Playable 实例
+//     3.CreateObject 重新创建 Animator 的运行时对象与依赖 收集该 Animator 影响的渲染器并注册可见性回调；据此决定剔除策略
 
 
 
