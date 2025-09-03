@@ -71,10 +71,10 @@
 //方法 Blend() Blend(const core::string& name, float targetWeight, float time)//把指定状态“混到”目标权重，不强制别人降权。常用于多状态叠加。
 //方法 CrossFade() CrossFade(AnimationState& playState, float time, PlayMode mode, bool clearQueuedAnimations) 对“同层”做交叉淡入淡出：目标状态淡入到权重1，其他同层状态淡出到0（或立即Stop）
 //方法 UpdateAnimation UpdateAnimation(double time)
-//     1.遍历 m_SyncedLayers，对每个层调用 SyncLayerTime(layer)，把该层的播放时间对齐到参考层，保证多层节拍一致。 2.为“刚停”的状态准备临时缓存 ALLOC_TEMP_AUTO(stoppedAnimations, m_AnimationStates.size()); 申请一块临时数组，用来记录本帧从“播放态→停止态”的状态指针，后续做善后。
+//     1.对齐每层的时间 2.为“刚停”的状态准备临时缓存 ALLOC_TEMP_AUTO(stoppedAnimations, m_AnimationStates.size()); 申请一块临时数组，用来记录本帧从“播放态→停止态”的状态指针，后续做善后。
 //     3.逐个 AnimationState 更新 如果是激活状态 调用上面的UpdateAnimationState 若返回 true 表示“刚停止”（到达末尾或被停止）“刚停止”且不需要立刻清理的，先记录到 stoppedAnimations[] stoppedAnimations[stoppedAnimationCount++] = &state;
 //     4.如果该状态本帧会对结果有贡献（权重/遮罩等决定），置 needsUpdate=true，意味着稍后需要混合采样。
-//     5.更新m_DirtyMask 6.如果 state.ShouldAutoCleanupNow() 已播放完且应当自动销毁 m_AnimationStates 列表移除 m_AnimationStates.erase(m_AnimationStates.begin() + i); 否则i++
+//     5.更新m_DirtyMask 6.如果 state.ShouldAutoCleanupNow() 已播放完且应当自动销毁 m_AnimationStates 列表移除 m_AnimationStates.erase(m_AnimationStates.begin() + i); 否则继续循环
 //     7.结束循环
 //     8.处理已排队的动画 UpdateQueuedAnimations(needsUpdate)：若有队列且时机到，会把队列里下一个克隆状态推进到播放；若有变化也会把 needsUpdate 置为 true。
 //     9.若 stoppedAnimationCount>0 对每个记录的状态调用 SetupUnstoppedState()，一般用于在采样前把“停止”转成一个可在本帧继续被正确混合的稳定形态 并把 needsUpdate=true，确保稍后会执行采样混合
@@ -82,11 +82,19 @@
 //     11.对“刚停止”的那些状态再调用 CleanupUnstoppedState()
 //方法 UpdateQueuedAnimations UpdateQueuedAnimations(bool& needsUpdate) 这个函数会启动已经到达开始时机的“排队动画 启动时一律使用队列项里的 fadeTime 作为淡入时长。也就是说，即便当前正在播放的动画会更早结束，我们仍然按 fadeTime 去把新动画淡入。选择多长的淡入时长由用户自己控制。
 //     1.遍历所有等待的动画 如果qa.mode == kStopAll(停止所有动画 当播放新动画时会停止所有层的动画) if (allQueueTime < 0) allQueueTime存储所有动画的剩余播放时间 负值表示尚未计算或需要重新计算 调用GetQueueTimes 具体参考下面
-//     2.
+//     2.如果不等于就比较当前动画层或者lastLayerQueueTime < 0 在调用GetQueueTimes函数
+//     3.startNow = fadeTime >= lastLayerQueueTime 解释下这句话 fadeTime：排队动画的淡入时长（从 QueuedAnimation.fadeTime 获取） allQueueTime：所有播放中动画的最大剩余时长（通过 GetQueueTimes 计算得出）
+//     当前播放状态：Walk 动画还剩 0.5 秒结束 Run 动画还剩 1.0 秒结束 allQueueTime = max(0.5, 1.0) = 1.0 秒  排队动画：- Attack 动画，fadeTime = 1.5 秒 判断：1.5 >= 1.0 → startNow = true → 立即开始 Attack
+//     fadetime是什么 这个参数控制动画切换的平滑程度，值越大切换越平滑，值越小切换越快速 可以通过unity脚本设置 CrossFade(name, fadeTime) Blend(name, targetWeight, fadeTime) QueueCrossFade(name, fadeTime, queueMode, playMode)
+//     4.如果startNow CrossFade这个动画 从等待队列中移除这个动画 重置 allQueueTime 和 lastLayerQueueTime 5.否则处理下一个动画
 //方法 GetQueueTimes GetQueueTimes(const Animation::AnimationStates& states, const int targetLayer, float& allQueueTime, float& layerQueueTime) allQueueTime 用于返回所有动画的剩余时间 layerQueueTime返回指定层的剩余时间
 //     1.遍历所有animationstate 并处理所有启动的动画 获取层级 如果state的wrapmode != kWrapModeDefault && wrapMode != kWrapModeClamp 那就是循环 重复播放的 allQueueTime等于无穷 如果由当前层级的一并设置为无穷
 //     2. 等于kWrapModeDefault kWrapModeClamp的计算时间（动画长度-当前时间） allQueueTime等所有的中最大的 由当前层级 更新layerQueueTime 计算逻辑同 allQueueTime
-
+//CorssFade Blend QueueCrossFade 这三个函数有什么区别 
+//     1.CrossFade 交叉淡入淡出，实现动画的平滑切换 同一层只保留一个主导动画 调用后立即开始切换  主动停止或淡出其他动画 默认清除同层的排队动画
+//     2.Blend 权重混合，在现有动画基础上叠加效果 多个动画可以同时播放 不停止其他动画调用后立即开始权重变化 不涉及排队机制
+//     3.QueueCrossFade 排队执行交叉淡入淡出 不立即执行，而是排队等待 根据当前动画状态决定何时开始 支持动画序列的编排
+ 
 //AnimationManager
 //属性 m_Animations m_FixedAnimations 都是动画列表 根据m_AnimatePhysics 决定加入那个
 //方法 InitializeClass InitializeClass()
@@ -109,8 +117,19 @@
 
 //unity是如何触发动画事件的？ 实行顺序是什么
 //     1.PlayerLoop 入口（FixedUpdate）在 AnimationManager.InitializeClass 中注册： FixedUpdate: LegacyFixedAnimationUpdate → GetAnimationManager().Update() PreLateUpdate: LegacyAnimationUpdate → GetAnimationManager().Update()
-//     2.AnimationManager.Update 若使用固定时间步（或 animatePhysics=true 的组件在 fixed 列表）：遍历 m_FixedAnimations 否则遍历 m_Animations 对每个 Animation 组件调用 animation.UpdateAnimation(time)
+//     2.AnimationManager.Update 若设置animation的Play Automatically 遍历 m_FixedAnimations 否则遍历 m_Animations 对每个 Animation 组件调用 animation.UpdateAnimation(time)
 //     3.Animation.UpdateAnimation(time)（Legacy Animation） 同步层时间 SyncLayerTime 推进各 AnimationState：state.UpdateAnimationState(time, this) 处理排队 UpdateQueuedAnimations 若需要更新则 SampleInternal()
-//     4.Animation.SampleInternal 重建活跃状态集，做混合 对每个活跃 AnimationState计算该状态上次时间 lastTime 与当前时间 now 如果该状态绑定的 AnimationClip 有事件，则调用：clip.FireAnimationEvents(info, sourceComponent)并填充数据
+//     4.Animation.SampleInternal 重建活跃状态集，做混合 对每个活跃 AnimationState计算该状态上次时间 lastTime 与当前时间 now 如果该状态绑定的 AnimationClip 上有事件，则调用：clip.FireAnimationEvents(info, sourceComponent)并填充数据
 //     5.AnimationClip.FireAnimationEvents遍历 clip 的事件列表 根据 lastTime → now 的区间与是否跨圈/反向，决定哪些事件触发 将命中的事件通过消息派发到 sourceComponent（通常是 Animation/Animator 所在的 GameObject 脚本），以 functionName 和参数调用对应方法
 //     总结FixedUpdate → AnimationManager.Update → Animation.UpdateAnimation → SampleInternal → AnimationClip.FireAnimationEvents（Legacy）
+
+//animation animationstate animationclip 都含有m_WrapMode 具体执行是根据那个来确定呢 
+//     具体逻辑在animation代码中 如果animationclip和animation不相等 优先使用animationclip的 其次使用animation的
+//     如果在运行中修改 那么animationstate的修改优先级最高 下一帧立刻执行 修改animation的会更新所有的animationstate 但是如果和animationclip不一样的话 会使用animationclip的 修改animationclip的 会影响当前和未来的 如果不是重新构建animationstate不会生效
+
+//animation Unity面板上参数都是干什么的 
+//      animation 当调用play时 如果没有传入name 会播放的动画 
+//      animations 存储所有可播放的动画剪辑 每个animationclip在运行时对应一个 AnimationState
+//      Play Automatically 当 GameObject 激活时，是否自动播放默认动画
+//      Animate Physics 决定动画在哪个更新循环中执行 勾选在 FixedUpdate 中更新（物理步）否则在 PreLateUpdate 中更新（普通帧）
+//      Culling Type Always Animate：无论是否可见都更新动画 Based On Renderers：只有当渲染器可见时才更新动画
