@@ -128,6 +128,22 @@
 //方法 Rebind Rebind(bool writeDefaultValues /* = true */)
 //     1.加一段性能采样，便于 Profiler 里看到 Rebind 的耗时 2.只有在允许写默认值时执行下面两步；注释提示：从资源加载唤醒时一般不写默认值，避免覆盖场景里已存在的数值  WriteDefaultValuesNoDirty 清空当前控制器的 Playable 实例
 //     3.CreateObject 重新创建 Animator 的运行时对象与依赖 收集该 Animator 影响的渲染器并注册可见性回调；据此决定剔除策略
+//方法 CreateObject CreateObject()
+//     1.验证是否可以禁用Animator  检查Animator组件是否处于活动状态 在编辑器模式下清除警告信息 开始性能分析 设置内存分配的所有者标签
+//     2.清理现有对象  初始化Avatar系统 检查Avatar是否成功初始化
+//     3.创建内部Playable图 创建内部控制器Playable 创建绑定 创建Playable内存 收集影响渲染器（收集动画受影响对象）
+//     调用时机 Animator组件首次激活时 Avatar或Controller发生变化时 编辑器模式下重新编译脚本时 运行时动态修改Animator配置时
+//方法  CollectAnimatedRenderers 函数的作用是收集所有需要动画材质属性的渲染器，并将它们添加到清理列表中，以便在动画停止时能够正确清理这些渲染器的自定义属性。
+//     1.检查绑定数据集是否有效 获取通用绑定数量 2.遍历所有绑定类型为kRendererMaterialPropertyBinding 从绑定中提取目标渲染器对象 将渲染器添加到 m_RenderersToClear 列表
+//     什么是动画渲染器？ 动画渲染器是指那些材质属性被动画系统控制的渲染器组件 例如 MeshRenderer SkinnedMeshRenderer SpriteRenderer
+//     动画系统会为渲染器创建自定义属性块 这些属性块占用内存，需要及时清理 避免内存泄漏 确保动画停止后，渲染器回到原始状态 避免动画残留影响后续渲染 只清理真正需要清理的渲染器
+
+
+//Playable  Playable是Unity在2017年引入的一个动画和音频系统的底层架构，它是一个可组合的、高性能的播放系统。
+//
+
+//Avatar Avatar 是Unity动画系统中的核心概念，它是一个骨骼映射和重定向系统，用于在不同角色模型之间共享动画数据。
+//属性 m_Allocator 内存分配器 m_Avatar Avatar常量数据 m_TOS TOS向量（Transform-Object-Scale） m_HumanDescription人形描述  m_AvatarSize Avatar数据大小 m_ObjectUsers 用户列表
 
 
 
