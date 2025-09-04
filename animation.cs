@@ -138,12 +138,42 @@
 //     什么是动画渲染器？ 动画渲染器是指那些材质属性被动画系统控制的渲染器组件 例如 MeshRenderer SkinnedMeshRenderer SpriteRenderer
 //     动画系统会为渲染器创建自定义属性块 这些属性块占用内存，需要及时清理 避免内存泄漏 确保动画停止后，渲染器回到原始状态 避免动画残留影响后续渲染 只清理真正需要清理的渲染器
 
+//AnimatorController
+//属性 m_AnimatorLayers存储动画控制器的所有层 m_AnimatorParameters 存储控制器的所有参数 m_Dependencies跟踪控制器依赖的资源对象 记录引用的 AnimationClip、AvatarMask 等资源
+//     m_AnimationClips存储控制器引用的所有动画剪辑 m_IsAssetBundled标记控制器是否被打包到 AssetBundle 中  m_Allocator 内存分配器，管理控制器相关的内存分配 m_Controller 控制器的常量数据结构指针
+//     m_ControllerSize 控制器常量数据的大小  m_AnimationSetBindings 动画集绑定信息  m_TOSType-Object-Size 向量，用于序列化和内存管理 m_MultiThreadedStateMachine 标记状态机是否支持多线程评估  m_StateMachineBehaviourVectorDescription StateMachineBehaviour 向量的描述信息
+//方法 InitializeClass InitializeClass()
+//     注册消息回调，监听动画剪辑和 Avatar 的变更  kDidModifyMotion kDidDeleteMotion kDidChangeMotionRuntimeEvents kDidModifyAvatar
+//方法 BuildAsset BuildAsset() 
+//     1.清理之前的资源 重建编辑器依赖 清空 Type-Object-Size 映射表 验证参数有效性ValidateParameters 
+//     2.收集所有层的动画剪辑 同步层使用被同步层的状态机 3.状态机索引计算 普通层分配新的状态机索引 同步层编辑为-1指向普通层
+//     4.状态机构建  5. 层常量构建阶段 设置层的所有属性 处理Avatar遮罩 6.构建参数 遍历 m_AnimatorParameters 7. 控制器常量构建阶段 把所需参数传入构建函数 保留新控制器 并序列化 向全局/运行时注册本控制器需用到的所有AnimationClip
+//     8. 状态机行为信息构建阶段（用于运行时定位与调用）
+//方法 ValidateParameters ValidateParameters() 
+//     1.遍历所有层 找到非同步层  2.检测speed参数是否设置存在和类型正确 3.检测镜像参数是否设置存在和类型正确 4.检查状态的时间参数是否存在 5.检测自定义参数
+//同步层和非同步层有什么区别  1 非同步层：拥有自己的状态机，可以独立设计状态和过渡 同步层：不拥有状态机，使用被同步层的状态机结构  2 非同步层：可以有不同的动画剪辑和动作 同步层：使用被同步层的动画剪辑，但可以覆盖动作
+
+
+//AnimatorControllerLayer 可以在unity animator窗口左面查看 
+//属性 m_Name 层的名称 m_StateMachine该层包含的状态机  m_Mask Avatar 遮罩(指定该层只影响身体的特定部位) m_Motions动作覆盖映射表 存储状态与动作的覆盖关系 m_Behaviours行为覆盖映射表
+//     m_BlendingMode 层的混合模式 m_SyncedLayerIndex 同步层的索引 指定该层与哪个层同步时间 -1 表示不同步 m_DefaultWeight 层的默认权重 m_IKPass 是否启用 IK 通道 m_Controller 所属的动画控制器引用
+//方法 全是一些gatset函数 不多追述了 根据指针循环查找 之后设置值 更新上面的映射表 返回
+
+//AnimatorStateMachine animator编辑器的背景
+//AnimatorState animator编辑器的框
+//AnimatorStateTransition animator编辑器中的箭头
+
+
+
+
+
+
 
 //Playable  Playable是Unity在2017年引入的一个动画和音频系统的底层架构，它是一个可组合的、高性能的播放系统。
 //
 
 //Avatar Avatar 是Unity动画系统中的核心概念，它是一个骨骼映射和重定向系统，用于在不同角色模型之间共享动画数据。
-//属性 m_Allocator 内存分配器 m_Avatar Avatar常量数据 m_TOS TOS向量（Transform-Object-Scale） m_HumanDescription人形描述  m_AvatarSize Avatar数据大小 m_ObjectUsers 用户列表
+//属性 m_Allocator 内存分配器 m_Avatar Avatar常量数据 m_TOS TOS向量（Transform-Object-Scale） m_HumanDescription人形描述  m_AvatarSize Avatar数据大小 m_ObjectUsers 用户列表 
 
 
 
@@ -169,3 +199,4 @@
 //      Play Automatically 当 GameObject 激活时，是否自动播放默认动画
 //      Animate Physics 决定动画在哪个更新循环中执行 勾选在 FixedUpdate 中更新（物理步）否则在 PreLateUpdate 中更新（普通帧）
 //      Culling Type Always Animate：无论是否可见都更新动画 Based On Renderers：只有当渲染器可见时才更新动画
+
