@@ -152,6 +152,11 @@
 //方法 ValidateParameters ValidateParameters() 
 //     1.遍历所有层 找到非同步层  2.检测speed参数是否设置存在和类型正确 3.检测镜像参数是否设置存在和类型正确 4.检查状态的时间参数是否存在 5.检测自定义参数
 //同步层和非同步层有什么区别  1 非同步层：拥有自己的状态机，可以独立设计状态和过渡 同步层：不拥有状态机，使用被同步层的状态机结构  2 非同步层：可以有不同的动画剪辑和动作 同步层：使用被同步层的动画剪辑，但可以覆盖动作
+//方法 CheckConsistency CheckConsistency() 确保控制器内部数据结构的有效性和正确性。它在每次修改控制器后都会被调用。
+//     1.移除不支持的 Vector 类型参数 从新绑定参数层级 2.检查每一层级是否正确 CheckLayersConsistency
+//方法 CheckLayersConsistency CheckLayersConsistency() 
+//     1.倒序遍历每一层 设置控制器引用 修改混合模式冲突 Additive 模式下 同步层不应该影响时间轴 因为会破坏叠加效果 
+//     2.同步层循环检测和修复 循环遍历 如果当层同步别的层 遍历找到最终层 如果找的到 那就修改该层的同步 同步带最终层 找不到就删除当前层
 
 
 //AnimatorControllerLayer 可以在unity animator窗口左面查看 
@@ -162,6 +167,24 @@
 //AnimatorStateMachine animator编辑器的背景
 //AnimatorState animator编辑器的框
 //AnimatorStateTransition animator编辑器中的箭头
+
+
+//AnimatorControllerPlayable 是动画系统的核心运行时类，它负责在运行时管理和执行 AnimatorController 的逻辑。
+//属性 m_AnimatorController 当前使用的 AnimatorController 或 AnimatorOverrideController 
+//    m_AnimatorControllerMemory存储控制器的所有运行时数据 m_ControllerConstant编译后的常量数据 m_ControllerInput 输入数据（参数值等） m_ControllerMemory运行时内存（状态、时间等）m_ControllerWorkspace 工作空间 m_ControllerMemorySize 内存大小
+//    m_StateMachineBehaviours 存储所有SMB m_BehaviourPlayer负责触发 StateMachineBehaviour 的回调 m_AdditionalIndexArray存储参数到曲线的映射索引 m_LayerMixer 负责多层动画的混合 m_AssetObserver监听控制器资源的变化 m_Playables存储 Playable 图节点的实例数据
+//方法 UpdateGraph(float deltaTime)每帧调用的主要更新函数，负责状态机评估和动画处理
+//     1.从m_AnimatorControllerMemory获取需要的数据 2.创建状态机输入 3.寻找非同步层 并且根据是否影响同步层设置输入数据 4.设置其他输入相关数据 例如变化时间 首次评估状态 动画绑定集 设置参数等
+//     6清空布尔类型触发器 7.自动评估权重 
+//方法 SetValue SetValue(mecanim::uint32_t id, T const& value)设置和获取动画参数值
+//方法 PrepareFrame PrepareFrame(const FrameData& info, Playable* source, bool forceEvaluation) 在每帧开始前准备数据，调用 UpdateGraph
+//     1.如果AnimatorControllerPlayable没有初始化 没有输入链接 或者输入的第一个参数无效返回 2.性能分析标记在profiler可见 
+//     3.如果在播放模式 就是运行时查看动画下直接返回  4.确保只在收到第一帧有效 deltaTime 时触发首次评估   5.调用UpdateGraph函数 
+//     6.寻找跟动画节点 如果自己或者子节点需要绑定分配 就请求绑定分配 如果需要提前处理就提前处理 
+//方法 ProcessAnimation ProcessAnimation(AnimationPlayableEvaluationConstant *constant, AnimationPlayableEvaluationInput *input, AnimationPlayableEvaluationOutput *output) - 动画处理函数
+//方法 SetupStateMachineBehaviours SetupStateMachineBehaviours()
+//方法 PreProcessAnimation PreProcessAnimation(AnimationPlayableEvaluationConstant const *constant, mecanim::animation::AnimationNodeState const* state) 在动画处理前进行预处理
+
 
 
 
@@ -200,3 +223,4 @@
 //      Animate Physics 决定动画在哪个更新循环中执行 勾选在 FixedUpdate 中更新（物理步）否则在 PreLateUpdate 中更新（普通帧）
 //      Culling Type Always Animate：无论是否可见都更新动画 Based On Renderers：只有当渲染器可见时才更新动画
 
+//https://github.com/GPUOpen-Tools/GPU-Reshape
