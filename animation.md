@@ -1,9 +1,10 @@
-#animationevent
+[animation.md](https://github.com/user-attachments/files/22198038/animation.md)
+# animationevent 
 
 参数: 
 
 1. 触发时间 回调函数名字 消息发送选项 
-2. 时间参数 类似int float objec等
+2. 事件参数 类似int float object等
 3. AnimationState AnimatorStateInfo AnimatorClipInfo 具体后面会介绍
 4. messageOptions 等于0 表示需要接受者 ！=0表示不需要接受者 （什么是需要接受者 通过方法名字寻找函数 如果需要接受者 但是没有找到方法会报错 ）
 ~~~ 代码
@@ -32,7 +33,9 @@ FireEvent：
 - 遍历 GameObject 上的所有 MonoBehaviour 组件：通过 functionName 查找方法指针，存在则调用 FireEventTo
 - 若未发送成功 构造错误信息并报错
 
-#AnimationState 
+
+
+# AnimationState 
 
 Legacy Animation 组件里，每个正在被播放（或可播放）的 AnimationClip 对应一个 AnimationState，记录时间、速度、权重、包裹模式、事件索引等运行时信息，并负责淡入淡出、事件触发、混合掩码等逻辑。
 animation state是什么时候初始化的： 
