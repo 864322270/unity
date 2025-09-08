@@ -1,5 +1,5 @@
 [animation.md](https://github.com/user-attachments/files/22198038/animation.md)
-# animationevent 
+# AnimationEvent 
 
 参数: 
 
@@ -26,15 +26,13 @@ FireEventTo:
 - 置“禁止立即销毁”的执行限制，调用脚本方法（允许协程返回值处理）
 - 恢复执行限制，清空 event 上的上下文指针
 - 返回：true 表示本组件处理成功
-1. FireEvent 事件派发总入口
+3. FireEvent 事件派发总入口
 
 FireEvent：
 - 拿到绑定的 GameObject，若未激活（或编辑器预览对象）直接返回 false/不派发。
 - 遍历 GameObject 上的所有 MonoBehaviour 组件：通过 functionName 查找方法指针，存在则调用 FireEventTo
 - 若未发送成功 构造错误信息并报错
-
-
-
+---
 # AnimationState 
 
 Legacy Animation 组件里，每个正在被播放（或可播放）的 AnimationClip 对应一个 AnimationState，记录时间、速度、权重、包裹模式、事件索引等运行时信息，并负责淡入淡出、事件触发、混合掩码等逻辑。
@@ -98,7 +96,7 @@ enum
 // 5秒后动画停止 → 临时保持最后一帧状态 → 采样系统应用最后一帧 → 电梯保持在顶层
 ~~~
 
-5.UpdateFading 动画权重淡入淡出的核心更新函数，负责处理两种类型的权重过渡 1自动淡出：当动画到达停止时间时自动开始淡出 2 手动淡入淡出：通过 SetWeightTarget() 设置的权重过渡
+5.UpdateFading 动画权重淡入淡出的核心更新函数，负责处理两种类型的权重过渡 1 自动淡出：当动画到达停止时间时自动开始淡出 2 手动淡入淡出：通过 SetWeightTarget() 设置的权重过渡
 ~~~
 AnimationState runState = anim["Run"];
 runState.weight = 0.0f;
@@ -106,3 +104,117 @@ runState.SetWeightTarget(1.0f, 0.5f);  // 0.5秒内淡入到权重1.0
 // 开始淡出
 runState.SetWeightTarget(0.0f, 1.0f);  // 1秒内淡出到权重0.0
 ~~~
+---
+# AnimationClip
+
+参数:
+1. 内存相关 m_ClipAllocator  内存分配器，用于管理AnimationClip的内存分配
+2. m_AnimationStates AnimationClip的所有AnimationState列表
+3. 基本属性 采样率 是否启用压缩  是否使用高质量曲线（编辑器专用） 包装模式（Default/Once/Loop/PingPong/ClampForever） 是否为Legacy动画 
+4. 曲线相关 四元数旋转曲线 欧拉角曲线 位置曲线 缩放曲线 浮点数属性曲线 对象引用曲线 m_Events 动画事件列表
+5. 编辑器支持 编辑模式备份、轨道管理、高质量曲线
+6. Mecanim支持: 肌肉数据、绑定常量、人形动画相关
+
+方法： 
+1. FireAnimationEvents  动画事件触发
+FireAnimationEvents： 
+- 检查播放方向（正向/反向）
+- 处理循环播放时的事件触发
+- 使用 m_LoopLastTime 标志跳过特定循环事件
+- 调用 FireEvent() 实际触发事件回调
+  
+2. GetRange 获取动画的最小和最大关键帧时间 
+GetRange： 调用时机: 需要动画时间边界时（如事件触发、循环计算）
+- 遍历所有曲线类型
+- 找到最早和最晚的关键帧时间
+- 缓存结果到 m_CachedRange
+
+3. SetEvents  SetRuntimeEvents  AddRuntimeEvent 
+
+SetEvents: 编辑器模式下设置动画事件
+- 备份事件到 m_EditModeEvents 调用 ClipWasModifiedAndUpdateMuscleRange() 
+- 标记对象为脏
+
+SetRuntimeEvents: 运行时批量替换所有动画事件
+- 完全替换现有事件列表 自动排序事件
+- 清除缓存范围 通知用户系统（通过消息机制）
+
+AddRuntimeEvent: 运行时添加单个动画事件
+- 使用二分查找插入到正确位置（保持排序）
+- 只添加一个事件，不影响其他事件 通知用户系统
+提一下通知用户系统 代码上显示 需要调用AddObjectUser 方法 但是unity并没有提供 通过反射我也没有拿到 如果真的要监听事件变化 建议开一个携程 监听旧事件和新时间的数量 
+
+~~~
+namespace AnimationClipBindings
+{
+    void Internal_AddObjectUser(AnimationClip& self, ScriptingObjectOfType<Object> user);
+    void Internal_RemoveObjectUser(AnimationClip& self, ScriptingObjectOfType<Object> user);
+}
+~~~
+
+~~~
+AnimationUtility.SetAnimationEvents(clip, newEvents); //SetEvents
+// 添加单个事件（调用 AddRuntimeEvent）
+AnimationEvent[] newEvents = new AnimationEvent[currentEvents.Length + 1];
+currentEvents.CopyTo(newEvents, 0);
+newEvents[currentEvents.Length] = newEvent;
+
+// 设置所有事件（调用 SetRuntimeEvents）
+clip.events = newEvents;
+~~~
+
+animationClip和animationState都可以调用fireevent函数 他们有什么区别吗 ： 
+1. animationstate的调用顺序： 
+   - c# Animation.Play() 
+   - C++ Animation::Play()
+   - c++ Animation::UpdateAnimation()
+   - c++ AnimationState::UpdateAnimationState()
+   - c++ AnimationState::FireEvents()
+
+~~~
+Animation anim = GetComponent<Animation>();
+anim.Play("Walk"); // 这会触发 AnimationState::FireEvents
+~~~
+
+2. animationclip的调用顺序： 
+   - C# Animator.SetTrigger() 
+   - c++ Animator::SetTrigger()
+   - c++ Animator::UpdateWithDelta()
+   - c++ AnimatorControllerPlayable::PrepareFrame()
+   - c++ AnimatorControllerPlayable::UpdateGraph()
+   - c++ AnimationClip::FireAnimationEvents()
+
+~~~
+Animator animator = GetComponent<Animator>();
+animator.SetTrigger("Walk"); // 这会触发 AnimationClip::FireAnimationEvents
+~~~
+
+animationClip 在animation组件中 运行时有什么实际作用吗？
+1. Animation 组件运行时，AnimationClip是 数据源 在 Animation 组件里，AnimationClip不“播放”，但提供“播放所需的一切数据”（曲线、事件、长度、wrap 等），由 AnimationState 管时间/权重并用它来采样与触发。
+
+还有一些Editor相关的函数 这里就不介绍了
+
+---
+# AnimationManager
+
+
+---
+# Animation 
+
+
+
+# 问题
+unity动画中怎么清楚脏标记： 
+1. Animation组件清楚脏标记  在 SampleInternal 函数中 
+2. 在Animation 的UpdateAnimation 中清楚animationstate的藏标记
+
+~~~
+for (size_t i = 0; i < m_AnimationStates.size(); i++)
+{
+    AnimationState& state = *m_AnimationStates[i];
+    
+    m_DirtyMask |= state.GetDirtyMask();  // 收集脏标记
+    state.ClearDirtyMask();               // 立即清除AnimationState的脏标记
+}
+~~~
+
