@@ -124,5 +124,100 @@ AnimatorStateMachine 是Unity动画系统中状态机的核心类 在animator中
 2. m_AnyStateTransitions  存储从AnyState到其他状态的过渡 m_EntryTransitions 存储进入状态机时的过渡 m_StateMachineTransitions 存储状态机之间的过渡关系
 3. 坐标相关 m_AnyStatePosition 在编辑器中AnyState节点的位置 m_EntryPosition 在编辑器中入口节点的位置 m_ExitPosition 在编辑器中出口节点的位置 m_ParentStateMachinePosition 在父状态机中的位置
 4. m_StateMachineBehaviours 存储附加到状态机的行为脚本 m_UserList 管理依赖此状态机的对象
+m_ChildStates 和 m_ChildStates有什么区别 
+~~~
+AnimatorController (根状态机)
+├── m_ChildStates
+│   ├── Idle (AnimatorState)
+│   ├── Walk (AnimatorState)
+│   └── Run (AnimatorState)
+└── m_ChildStateMachines
+    ├── Combat (AnimatorStateMachine)
+    │   ├── m_ChildStates
+    │   │   ├── Attack (AnimatorState)
+    │   │   └── Defend (AnimatorState)
+    │   └── m_ChildStateMachines (空)
+    └── Locomotion (AnimatorStateMachine)
+        ├── m_ChildStates
+        │   ├── Idle (AnimatorState)
+        │   └── Move (AnimatorState)
+        └── m_ChildStateMachines (空)
+~~~
+反复提到了ChildAnimatorState ChildAnimatorStateMachine 他们是什么 和 AnimatorStateMachine AnimatorState有什么关系 ： 
+1. 如图所示
+~~~
+AnimatorStateMachine
+├── m_ChildStates (ChildAnimatorState[])
+│   ├── ChildAnimatorState
+│   │   └── m_State → AnimatorState (实际状态)
+│   └── ChildAnimatorState
+│       └── m_State → AnimatorState (实际状态)
+└── m_ChildStateMachines (ChildAnimatorStateMachine[])
+    ├── ChildAnimatorStateMachine
+    │   └── m_StateMachine → AnimatorStateMachine (子状态机)
+    └── ChildAnimatorStateMachine
+        └── m_StateMachine → AnimatorStateMachine (子状态机)
+~~~
+2. ChildAnimatorState是AnimatorState的包装器，用于在状态机中管理状态 容器类，不直接播放动画 存储状态在状态机中的位置和引用 
+3. ChildAnimatorStateMachine AnimatorStateMachine的包装器，用于在状态机中管理子状态机 容器类，不直接播放动画 存储子状态机在父状态机中的位置和引用
+4. AnimatorState 是实际的动画状态，直接播放动画 播放AnimationClip或BlendTree
+5. 为什么需要包装器 ChildAnimatorState：在编辑器中显示为矩形节点，可以拖拽移动 ChildAnimatorStateMachine：在编辑器中显示为圆角矩形，可以展开/折叠
+6. 这四个都是编辑器专用 在运行时转化成StateMachineConstant 和 StateConstant<br>
 
+方法： 
+1. 同 AnimatorState 大多数都是一些 get set add 方法 还有部分 check rename方法 
+2. BuildRuntimeAsset 
+BuildRuntimeAsset(TOSVector& tos, AnimatorControllerLayerVector& layers, const AnimationClipPPtrVector& animationClips, RuntimeBaseAllocator& alloc) <br>
+解释一下 TOSVector TOSVector& tos 是“字符串表（Table Of Strings）”的构建容器。构建运行时常量时，所有用到的名字/路径/标签/参数名等字符串都会通过 ProccessString(tos, "...") 被“实参表化”：去重收集进同一个字符串表，并返回一个 uint32 的ID。随后，状态机的各类常量用这些ID而不是原始字符串，达到体积更小、对比更快、可序列化且稳定可复现的目的。<br>
+BuildRuntimeAsset ：顾名思义就是把编辑器的数据结构转换成运行时的数据结构
+- 收集所有状态 把默认状态设置为第一个 提高查找效率
+- 收集所有状态机信息
+- 为每个状态机创建entry节点 包括处理solo/mute逻辑 过度常量等 创建过渡到默认状态条件
+- 为每个状态机创建exit节点 如果没有节点到exit就使用默认 有就构建状态机的过度
+- 构建状态常量 对每个状态执行 处理状态过渡(BuildTransitionConstant) 处理动画数据 (clip 调用 CreateBlendTreeConstant blendtree 调用 BlendTree::BuildRuntimeAsset) 创建状态常量(CreateStateConstant) 构建 Any State 过渡(BuildTransitionConstant)
+- 创建最终状态机常量(CreateStateMachineConstant)
+- 返回的 StateMachineConstant 包含：
+m_StateConstantArray: 所有状态的常量数组
+m_AnyStateTransitionConstantArray: Any State 过渡常量数组
+m_SelectorStateConstantArray: 选择器状态常量数组（Entry/Exit 节点）
+m_DefaultState: 默认状态索引
+m_SynchronizedLayerCount: 同步层数量<br>
+3. BuildTransitionConstant (AnimatorStateTransition& transition, AnimatorState const* state,StateInfoVector const& allState, StateMachineInfoVector const& allStateMachines, TOSVector& tos, RuntimeBaseAllocator& alloc)
+BuildTransitionConstant: 把编辑器里的一个 AnimatorStateTransition（含条件、目标、时长、打断设置等）编译为运行时可用的 TransitionConstant，供 mecanim 状态机快速评估使用。 
+- 如果是animatorState 找到在allstate中的索引 如果是 AnimatorStateMachine 在 allStateMachines中找到索引 如果找不到返回报错 给出错误信息 否则dstStateIndex = (dstStateMachineIndex * 2) + mecanim::statemachine::s_SelectorStateEncodeKey;<br>
+dstStateIndex 是allstate中的索引 dstStateMachineIndex是allStateMachines 
+解释一下这句话 因为entry和exit是伪节点 他们是在AnimatorStateMachine声明的 而不是AnimatorState 简单把dstStateIndex表示我要去哪里 这个哪里可能是普通状态 也可能是子状态机的entry和exit这样的节点 为了不和普通状态混淆 Unity把“选择器节点(Entry/Exit)”放到一个单独的“编号区”，这个区的编号都加了同一个大偏移量：s_SelectorStateEncodeKey。<br>
+这句代码的语义就是“把过渡的目的地设为‘子状态机的 Entry 节点’”，并且“放到选择器编号空间”里，避免和普通状态索引冲突。<br>
+最后再给出一个例子
+~~~
+假设有三个子状态机，索引为：Locomotion=0，Combat=1，UI=2
+它们的 Entry 节点在选择器区的编号：
+Locomotion Entry: 0*2 + key = 0 + key
+Combat Entry: 1*2 + key = 2 + key
+UI Entry: 2*2 + key = 4 + key
+它们的 Exit 节点在选择器区的编号（供对比理解）：
+Locomotion Exit: 0*2+1 + key = 1 + key
+Combat Exit: 1*2+1 + key = 3 + key
+UI Exit: 2*2+1 + key = 5 + key
+~~~
+-  若前面仍未得到目标索引 如果过渡是 “To Exit”，将目标编码为“父状态机的 Exit 选择器索引”：((parentIndex * 2) + 1) + s_SelectorStateEncodeKey。 否则（既不是状态、也不是子状态机、也不是 Exit）→ 非法目标：报错并返回空
+-  把编辑器层的 Condition 列表编译为 ConditionConstant 数组（内部会用 tos 生成参数名ID） 调用 BuildConditionConstants函数 如果既没有条件、又没有 Exit Time，则给出警告：该过渡在运行时会被忽略（避免无条件“永久真”的过渡）
+-  统一字符串ID（使用 tos）
+-  生成 TransitionConstant 调用CreateTransitionConstant函数 这个函数后面会讲如果我没忘记的话 搜不到大家提醒我 
+4. BuildSelectorTransitionConstant
+把“选择器过渡”编译成运行时的 SelectorTransitionConstant。选择器过渡指两类<br>从 Entry 节点指向某个状态/子状态机（进入） 从子状态机的 Exit 节点指回父级（退出） 
+- 判断过渡类型
+ 如果是到“状态”（AnimatorStateTransition 或 AnimatorTransition 的 GetDstState()）：用 GetStateIndex(...) 得到“普通状态索引”<br>
+ 如果是到“子状态机”：把目标编码为“子状态机 Entry 选择器索引” dst = dstStateMachineIndex * 2 + s_SelectorStateEncodeKey（偶数槽位表示 Entry）<br>
+ 如果是 “Exit”：把目标编码为“父状态机 Exit 选择器索引”dst = (parentIndex * 2 + 1) + s_SelectorStateEncodeKey（奇数槽位表示 Exit）<br>
+ 上面解释过公式<br>
+- 目标无效则返回 0（忽略该过渡）
+- 用 BuildConditionConstants 将条件编译为运行时条件常量
+- 调用 CreateSelectorTransitionConstant 生成选择器过渡常量<br>
+
+问 BuildSelectorTransitionConstant 和 BuildTransitionConstant 有什么区别？<br>
+- 两者都在“编译animator箭头”，只是BuildTransitionConstant 处理“状态层面的过渡” BuildSelectorTransitionConstant 处理“Entry/Exit/子状态机出入口等选择器相关的过渡”。
+- 解释一下普通箭头和选择器箭头 普通箭头（状态→状态、Any State→状态/子状态机/Exit） 选择器箭头（Entry→目标、子状态机的 Exit→父级/目标、状态机间箭头）
+- 一般情况下 普通箭头在animator中是白色的 选择器箭头是灰色的
+5. BuildConditionConstants
 
