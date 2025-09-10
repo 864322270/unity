@@ -96,4 +96,33 @@ attackToIdle.AddCondition(AnimatorConditionMode.Equals, "AttackFinished", 1);
 ---
 
 # AnimatorState
+animatorstate实际上就是打开animator中的小方块<br>
+属性：
+1. 动画相关 motion 状态关联的动画剪辑或混合树 speed 动画播放速度倍率 cycleOffset 动画循环偏移量 time 动画时间偏移
+2. 镜像和IK参数 mirror 是否镜像播放动画 iKOnFeet 是否启用脚部IK riteDefaultValues 是否写入默认值到动画曲线
+3. 参数化控制 speedParameter  mirrorParameter cycleOffsetParameter timeParameter 都是一些参数<br>
+与AnimatorStateTransition中的参数不同 AnimatorState中的参数是控制具体属性的 例如 speedParameter控制的就是speed 如果想让他生效 还要设置对应的 speedParameterActive为true 这些在animator中都可以设置
+4. tag 状态标签（类似于gameobject的tag 方便快速区分）  name <br>
+这些参数大部分都可以在animator编辑器面板中看到
+5. m_UserList 管理对象间依赖关系的核心机制。它维护了一个双向连接的用户列表 当 AnimatorState 的属性发生变化时，通过 m_UserList.SendMessage(kDidModifyMotion) 通知所有依赖对象
+6. m_Transitions 保存从当前状态到其他状态的所有转换条件 m_StateMachineBehaviours 保存附加到当前状态的自定义脚本 （简称smb）是一个很重要的类后面会讲 <br>
+
+方法： 
+1. 因为这也是编辑器类 所以大部分方法都是一些简单的get set方法<br>
+
+AnimatorState 和 AnimatorStateInfo 有什么区别： 
+1. 类似animationstate 和 AnimationClip的关系 AnimationClip 是编辑器类 而AnimatorStateInfo是运行时结构体 
+2. AnimatorState负责定义状态应该是什么样的 AnimatorStateInfo负责告诉你在运行时状态实际是什么样的
+3. AnimatorStateInfo 的构建确实需要依靠 AnimatorState，但不是 1:1 直接生成
+4. AnimatorState → StateConstant → AnimatorStateInfo  一个 AnimatorState 对应一个 StateConstant，但一个 StateConstant 可以生成多个 AnimatorStateInfo
+
+---
+# AnimatorStateMachine
+AnimatorStateMachine 是Unity动画系统中状态机的核心类 在animator中 整个后面的窗口可以理解为一个 AnimatorStateMachine 这也是一个仅在编辑器下才能使用的类
+属性： 
+1. m_DefaultState 存储状态机的默认状态 m_ChildStates 存储状态机包含的所有子状态 m_ChildStateMachines 存储状态机包含的所有子状态机 
+2. m_AnyStateTransitions  存储从AnyState到其他状态的过渡 m_EntryTransitions 存储进入状态机时的过渡 m_StateMachineTransitions 存储状态机之间的过渡关系
+3. 坐标相关 m_AnyStatePosition 在编辑器中AnyState节点的位置 m_EntryPosition 在编辑器中入口节点的位置 m_ExitPosition 在编辑器中出口节点的位置 m_ParentStateMachinePosition 在父状态机中的位置
+4. m_StateMachineBehaviours 存储附加到状态机的行为脚本 m_UserList 管理依赖此状态机的对象
+
 
