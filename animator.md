@@ -118,7 +118,7 @@ AnimatorState 和 AnimatorStateInfo 有什么区别：
 
 ---
 # AnimatorStateMachine
-AnimatorStateMachine 是Unity动画系统中状态机的核心类 在animator中 整个后面的窗口可以理解为一个 AnimatorStateMachine 这也是一个仅在编辑器下才能使用的类
+AnimatorStateMachine 是Unity动画系统中状态机的核心类 在animator中 整个后面的窗口可以理解为一个 AnimatorStateMachine 这也是一个仅在编辑器下才能使用的类<br>
 属性： 
 1. m_DefaultState 存储状态机的默认状态 m_ChildStates 存储状态机包含的所有子状态 m_ChildStateMachines 存储状态机包含的所有子状态机 
 2. m_AnyStateTransitions  存储从AnyState到其他状态的过渡 m_EntryTransitions 存储进入状态机时的过渡 m_StateMachineTransitions 存储状态机之间的过渡关系
