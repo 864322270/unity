@@ -560,9 +560,118 @@ Root (StateMachine)
 3. m_TriggerResetArray: 本帧需要复位的 Trigger 标志数组指针
 4. m_MaxBlendedClipCount: 本层最大混合片段数上限（为临时缓冲分配提供界限）
 
-animator的执行顺序
+<!-- animator的执行顺序
 1.  Animator.UpdateGraph
 2.  AnimatorControllerPlayable::PrepareFrame/UpdateGraph
 3.  statemachine::EvaluateStateMachine
 4.  AnimationClipPlayable::PrepareFrame
-5.  AnimationClip::FireAnimationEvents
+5.  AnimationClip::FireAnimationEvents -->
+
+## StateMachineBehaviourPlayer （StateMachineBehaviour）简称SMB
+SMB是什么为什么需要SMB ：
+1. SMB 是一个抽象基类，继承自 ScriptableObject
+2. SMB 允许开发者在不修改 Unity 源码的情况下，为 Animator 的状态和状态机添加自定义逻辑。
+方法： 
+1. GetBehaviourMethod 将运行时的消息类型转换为脚本缓存中的方法索引 如果传入无效的消息ID，返回 kMethodCount（表示无效）
+2. FireBehaviour <br>执行指定状态/状态机的所有 SMB 方法
+FireBehaviour ：FireBehaviour(StateKey& key, ScriptingArguments &arguments, mecanim::statemachine::StateMachineMessage messageID, bool stateBehaviour) 
+- key状态键值（状态ID + 层索引） arguments: 脚本调用参数 messageID: 要调用的消息类型 stateBehaviour: 是否为状态行为（true）还是状态机行为（false）
+- 获取所有SMB实例的容器 并查找状态范围 （返回当前 AnimatorControllerPlayable 的所有 SMB）
+- 遍历并执行 SMB 方法 
+- 获取 SMB 实例 通过索引获取 SMB 实例 检查索引有效性 检查 SMB 实例是否存在 检查脚本实例是否有效 检查 SMB 是否启用
+- 获取方法指针 将消息类型转换为方法索引 获取对应的方法指针 检查方法是否存在 检测参数是否合理 
+- 执行脚本调用 记录是否成功（无异常）
+1. FireStateBehaviour 调用状态相关的 SMB 方法（如 OnStateEnter, OnStateExit 等）(状态行为调用)<br>
+FireStateBehaviour 是什么时候调用的<br>
+在 Animator::FireBehaviours 中 后面再介绍 
+1. FireStateMachineBehaviour 调用状态机相关的 SMB 方法（如 OnStateMachineEnter, OnStateMachineExit） (状态机行为调用)<br>
+FireStateMachineBehaviour 是什么时候调用的<br>
+根据我的源码阅读 FireStateMachineBehaviour 中只有 OnStateMachineExit和 OnStateMachineEnter会被调用 其余的 （如 OnStateUpdate, OnStateMove, OnStateIK）不会被调用
+在EvaluateStateMachine 中 
+~~~ csharp
+// 在状态机评估过程中，当检测到 Entry/Exit 选择器变化时
+if (apStateMachineInput->m_StateMachineBehaviourPlayer != 0 && apStateMachineInput->m_StateMachineBehaviourPlayer->HasStateMachineBehaviour() && !apStateMachineInput->m_StateMachineBehaviourPlayer->m_Playable->IsMultithreadable())
+{
+    apStateMachineInput->m_StateMachineBehaviourPlayer->FireStateMachineBehaviour( // 根据选择器类型决定调用 Enter 还是 Exit
+        currentSelector->m_FullPathID, apStateMachineInput->m_LayerIndex, 
+        currentSelector->m_IsEntry ? mecanim::statemachine::kOnStateMachineEnter : mecanim::statemachine::kOnStateMachineExit
+    );
+}
+~~~
+
+## Animator 
+属性 ： 
+1. m_Controller 当前使用的控制器资源（AnimatorController 或 AnimatorOverrideController）。控制参数、层、状态机等
+2. m_ControllerPlayable (AnimatorControllerPlayable): 绑定到 PlayableGraph 的控制器运行体，实际驱动状态机、事件、SMB。
+3. m_Avatar (PPtr<Avatar>): 人形绑定与T姿势数据；人形/通用很多路径分支依赖此对象。
+4. m_CurrentAvatarRoot (PPtr<Transform>): Avatar 根节点缓存，加速根姿势访问。
+5. m_UpdateMode (UpdateMode: kNormal/kAnimatePhysics/kUnscaledTime): 决定使用哪条时间线（GameTime/FixedTime/Unscaled）。
+6. m_CullingMode (CullingMode: kCullNone/kCullRetargetIKWrite/kCullAll): 可见性剔除策略，控制是否评估、是否写回变换/IK。
+7. m_Visible (bool): 可见性缓存，配合渲染器集合做剔除。
+8. m_AnimatorActivePasses (int, 位掩码): 当前正在执行的 Animator 阶段（如 OnAnimatorMove、IK、采样、写属性等）
+9. m_Speed (float): 全局播放速度缩放。
+10. m_ApplyRootMotion (bool): 是否应用根运动到 Transform
+11. m_LinearVelocityBlending (bool): 线速度混合开关，影响混合时速度插值方式。
+12. m_DeltaPosition/m_DeltaRotation: 本帧根位移/旋转增量（供上层读取）
+13. m_Velocity/m_AngularVelocity: 推导出的速度与角速度（供物理或角色控制使用）。
+14. m_PivotPosition: 旋转枢轴点（足底/转身等）。
+15. m_MatchStartTime/m_MatchStateID: 匹配目标的起始时间与目标状态。
+16. m_MatchPosition/m_MatchRotation: 目标位置与旋转。
+17. m_MatchTargetMask (MatchTargetWeightMask): 位置XYZ与旋转权重。
+18. m_MustCompleteMatch (bool): 是否必须完成匹配（影响中断策略）。
+19. m_TargetPosition/m_TargetRotation: Animator 层级目标（如 SetTarget / LookAt）。
+20. m_BackupDefaultValues (mecanim::ValueArray): Rebind/Write Defaults 备份值，确保重绑定时恢复初值。
+21. m_CachedAnimationClips (AnimationClips): 控制器所引用的动画片段缓存，加速查询
+22. m_AnimatorBindingsVersion (UInt32): 绑定版本号，动画绑定改变时递增，用于脏标记与重绑定。
+23. m_HasAnimationEvents (bool): 控制器是否包含事件的快速标志。
+24. m_HasStateMachineBehaviour (bool): 是否存在 SMB；用于是否进入 SMB 触发路径的快速分支。
+25. m_AvatarDataSet (AvatarDataSet): AvatarConstant/Input/Output/Memory/Workspace 指针与分配器；负责人形姿势、重定向等。
+26. m_BindingsDataSet (BindingsDataSet): AnimatorGenericBindingConstant 与 AnimationSetBindings；曲线绑定到目标属性的编址信息。
+27. m_SamplingDataSets (AutoMecanimDataSet): 采样专用的一组 Avatar/Bindings/Controller 内存，便于离线采样和复用。
+28. m_PlayableConstant/m_PlayableInput: 给可播放系统的评估常量/输入（层权重、速度、参数值等）
+29. m_PlayableGraph/m_PlayableOutput: 图句柄与输出端口，连接到动画流（Transforms/Properties）。
+30. m_BoundPlayables/m_PlayableNodes: 与 Animator 绑定的 playable 节点集合，生命周期统一管理。
+31. m_RecorderMode (AnimatorRecorderMode): eRecord/ePlayback/eOffline。
+32. m_PlaybackDeltaTime/m_PlaybackTime: 回放步进与当前时间。
+33. m_FireEvents (bool): 是否触发 AnimationEvent。
+34. m_KeepAnimatorControllerStateOnDisable (bool): 组件禁用时是否保留控制器状态。
+35. m_IsInitialized/m_HasTransformHierarchy/m_AllowConstantClipSamplingOptimization: 初始化与优化开关。
+36. m_ContainedRenderers/m_RenderersToClear: 受影响渲染器列表与待清列表；配合可见性剔除与重绑定。
+37. m_WriteGlobalPoseFence (JobFence): 写全局姿势的同步栅栏。
+38. m_ControllerPlayableCache (vector<AnimatorControllerPlayable>): 分层缓存/多Playable 实例缓存与层计数；用于多路评估（如层拆分、写阶段）。
+39. m_AnimatorAvatarNode/m_AnimatorControllerNode/m_ObjectUsers: 资源使用者链表节点，确保资源与 Animator 生命周期绑定，编辑器/运行时一致。
+
+方法： 
+1. UpdateWithDelta 每帧入口（或物理步），驱动可播放图评估与整条 Animator 管线
+2. EvaluateController 在图评估前后做控制器级准备与收尾（参数推送、层处理等）
+3. Prepare(): 本帧准备阶段的总控（检查初始化、脏数据、是否需要评估等）
+4. SetPrepareStage(): 将当前 Animator 绑定到正确的 PlayerLoop 阶段（Update/FixedUpdate 开始段）
+5. OnPlayableBind/OnPlayableUnbind/OnGraphTopologyChanged: 与 PlayableOutput 生命周期/拓扑变化联动，重建端口和缓存。
+6. InitStep(AnimatorJob&, float deltaTime): 本帧初始化步骤，构造本帧 AnimatorJob、推送权重/速度、准备输入缓冲
+7. ProcessAnimationsStep(AnimatorJob&): 评估动画层/混合树，写入骨骼姿势流与属性流的中间缓冲
+8. WriteStep(AnimatorJob&): 写回阶段，骨骼矩阵/Transform/属性真正落地到场景
+9. WriteProperties(float deltaTime, float realDeltaTime): 属性曲线（非 Transform）写回（例如材料/自定义浮点属性等）
+10. FireAnimationEvents(AnimatorJob&): 逐条触发 AnimationEvent，反射到脚本方法（Animator 路径）
+11. PrepareAnimationEvents(AnimatorJob&): 从已采样片段汇总本帧事件窗口
+12. GetDeltaPosition()/GetDeltaRotation()/GetVelocity()/GetAngularVelocity(): 根运动/速度查询接口，用于上层控制器/物理
+13. Rebind(bool writeDefaultValues): 重绑定（重建 Avatar/Bindings/Playable 内存、恢复默认值），切控器/Avatar/装配变化时使用。
+14. SetRuntimeAnimatorController(RuntimeAnimatorController): 切换控制器，创建或替换 AnimatorControllerPlayable，必要时 Rebind/重建图。<br>
+C# 层 animator.runtimeAnimatorController = x 代码/资源热更时切控制器 编辑器域重载、Prefab 替换、场景载入时重设引用 会调用<br>
+可能触发一次完整的图与内存重建（可见卡顿点，应在非关键帧/加载阶段调用）<br>
+参数集合、层数、SMB、事件、曲线绑定都会随控制器变化而刷新<br>
+若更换为 AOC（OverrideController），会沿用底层 Controller 的图结构，但替换片段映射，并通知 UI 刷新<br>
+1.  GotoState/GotoStateInFixedTime: 强制跳转到某状态（归一化时间或固定时间），支持过渡时长/进度设置。<br>
+做了什么 ： <br>
+- 参数与层/状态校验：ValidateGoToState(layerIndex, stateId)
+- 处理特殊 timeOffset 若传入 -inf 且当前不在过渡，检查当前状态是否已是目标；是则直接 return 否则将 timeOffset 设为 0，从头开始
+- 标记本层所属状态机的“强制跳转”标志 m_StateMachineMemory[stateMachineIndex]->m_ActiveGotoState = true;
+- 写入本层的 GotoStateInfo（供下一次 EvaluateStateMachine 消费） 
+- 随后在下一帧的 EvaluateStateMachine 中读取这些输入，建立“动态过渡”，发出 kOnStateExit/kOnStateEnter 等 SMB 消息，并驱动混合与采样。若过渡时长为 0，则为瞬时切换。<br>
+unityApi animator.corssfade本质上调用的就是gotostate<br>
+~~~ c++
+inline void CrossFade(Animator* self, int stateHashName, float normalizedTransitionDuration, int layer, float normalizedTimeOffset, float normalizedTransitionTime)
+{
+    self->GotoState(layer, stateHashName, normalizedTimeOffset, normalizedTransitionDuration, normalizedTransitionTime);
+}
+~~~
+
