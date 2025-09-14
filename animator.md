@@ -1,4 +1,4 @@
-[animator.md](https://github.com/user-attachments/files/22318799/animator.md)
+[Uploading animator.md…]()
 # Animator
 
 ---
@@ -571,7 +571,8 @@ Root (StateMachine)
 ## StateMachineBehaviourPlayer （StateMachineBehaviour）简称SMB
 SMB是什么为什么需要SMB ：
 1. SMB 是一个抽象基类，继承自 ScriptableObject
-2. SMB 允许开发者在不修改 Unity 源码的情况下，为 Animator 的状态和状态机添加自定义逻辑。
+2. SMB 允许开发者在不修改 Unity 源码的情况下，为 Animator 的状态和状态机添加自定义逻辑。<br>
+
 方法： 
 1. GetBehaviourMethod 将运行时的消息类型转换为脚本缓存中的方法索引 如果传入无效的消息ID，返回 kMethodCount（表示无效）
 2. FireBehaviour <br>执行指定状态/状态机的所有 SMB 方法
@@ -644,7 +645,7 @@ if (apStateMachineInput->m_StateMachineBehaviourPlayer != 0 && apStateMachineInp
 
 方法： 
 1. UpdateWithDelta 每帧入口（或物理步），驱动可播放图评估与整条 Animator 管线
-    获取 PlayableGraph 实例 更新图形帧ID，标记新帧开始 准备图形评估，设置时间参数 再次更新帧ID，强制重新评估 控制器更新调用UpdateAvatars (UpdateAvatars)这个函数实际上就是调用一个设置transform位置的函数 SetGenericTransformPropertyValuesNoSync 
+    获取 PlayableGraph 实例 更新图形帧ID，标记新帧开始 准备图形评估，设置时间参数 再次更新帧ID，强制重新评估 控制器更新调用UpdateAvatars (UpdateAvatars)这个函数实际上就是调用一个设置transform位置的函数 SetGenericTransformPropertyValuesNoSync SMB相关调用也是在这个函数里 
 2. EvaluateController 在图评估前后做控制器级准备与收尾（参数推送、层处理等）
    EvaluateController 函数是 Animator 控制器评估的核心函数，负责更新和评估 AnimatorController 的状态机，处理状态转换、参数更新和动画播放逻辑。<br>
    就是循环调用调用 AnimatorControllerPlayable::UpdateGraph函数。
@@ -720,7 +721,13 @@ inline void CrossFade(Animator* self, int stateHashName, float normalizedTransit
     self->GotoState(layer, stateHashName, normalizedTimeOffset, normalizedTransitionDuration, normalizedTransitionTime);
 }
 ~~~
-16.  BuildJobs(const PlayableOutputPtrArray& outputs, AnimatorJobs& animatorJobs, AnimatorJobs* humanoidJobs, dynamic_array<bool>* shouldFireEvents, dynamic_array<bool>* shouldFireSMBs, bool FKPass, bool updateGraph) <br>
+16. FireBehaviours  函数是 Animator 状态机行为系统的核心，负责触发状态机行为（StateMachineBehaviour）的各种回调方法，如 OnStateEnter、OnStateExit、OnStateUpdate 等。<br>
+    - 遍历控制器播放器 创建控制器播放器的副本 获取控制器常量、内存、工作空间数据
+    - 状态机行为检查 确保有状态机行为播放器 确保有状态机行为需要触发
+    - 状态机遍历 遍历所有状态机 遍历所有层 
+    - 状态消息处理 处理当前状态消息 中断状态消息 下一个状态消息 调用 FireStateBehaviour 触发行为
+ 
+17.  BuildJobs(const PlayableOutputPtrArray& outputs, AnimatorJobs& animatorJobs, AnimatorJobs* humanoidJobs, dynamic_array<bool>* shouldFireEvents, dynamic_array<bool>* shouldFireSMBs, bool FKPass, bool updateGraph) <br>
 介绍一下这个函数的几个参数 outputs：来自 PlayableOutputPtrArray，包含所有需要处理的动画输出  animatorJobs：空的 AnimatorJobs 数组，用于存储构建的作业 humanoidJobs：可选的 AnimatorJobs 数组，专门用于人形动画 shouldFireEvents：布尔数组，标记哪些 Animator 需要触发事件 shouldFireSMBs：布尔数组，标记哪些 Animator 需要触发状态机行为  FKPass：布尔值，表示是否为前向运动学通道 updateGraph：布尔值，表示是否需要更新图形<br>
 - 遍历所有传入的动画输出 验证输出类型是否为动画类型 验证播放器存在 验证目标 Animator 存在 检查 Animator 是否运行 检查是否应该添加（可见性检查）
 - 多播放器处理 查找已存在的 AnimatorJob  添加新的播放器到现有作业
@@ -728,26 +735,6 @@ inline void CrossFade(Animator* self, int stateHashName, float normalizedTransit
 - 设置事件和状态机行为标志
 - 人形动画特殊处理<br>
 介绍下动画到底是怎么改变transform的
-~~~
-Unity 更新循环
-    ↓
-动画数据输入
-    ↓
-UpdateWithDelta() [主入口]
-    ↓
-UpdateAvatars() [协调器]
-    ↓
-ProcessAnimationsJob() [多线程处理]
-    ↓
-ProcessAnimationsStep() [动画计算]
-    ↓
-ProcessPlayableGraph() [图形处理]
-    ↓
-WriteStep() [属性写入]
-    ├─ Transform 属性 → SetGenericTransformPropertyValuesNoSync()
-    └─ 材质属性 → SetGenericFloatPropertyValues()
-        └─ SetBoundCurveFloatValue() → 实际写入目标对象
-~~~
 ---
 
 ## AnimatorJob
@@ -777,3 +764,156 @@ struct AnimationClipEventInfo
 
 ---
 
+## 执行顺序
+~~~
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           Animator.UpdateWithDelta()                            │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │ 1. 检查活动状态: IsActive()                                            │   │
+│  │ 2. 系统准备: Prepare()                                                 │   │
+│  │ 3. PlayableGraph 更新: PrepareFrame()                                  │   │
+│  │ 4. 调用 UpdateAvatars()                                               │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            UpdateAvatars()                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │ 第一阶段: doFKMove = true                                              │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 1. BuildJobs() - 构建动画作业                                   │   │   │
+│  │ │    ├─ 遍历 BoundPlayables                                       │   │   │
+│  │ │    ├─ 收集 AnimatorControllerPlayable                           │   │   │
+│  │ │    └─ 构建 AnimatorJob 数组                                     │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 2. InitStep() - 初始化步骤                                      │   │   │
+│  │ │    ├─ 设置时间参数                                              │   │   │
+│  │ │    ├─ 处理播放模式 (正常/录制/回放)                             │   │   │
+│  │ │    └─ 配置线性速度混合                                          │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 3. EvaluateController() - 控制器评估                            │   │   │
+│  │ │    ├─ 检查控制器状态                                            │   │   │
+│  │ │    ├─ 处理首次评估标志                                          │   │   │
+│  │ │    └─ 调用 AnimatorControllerPlayable::UpdateGraph()            │   │   │
+│  │ │        ├─ 重置触发器参数                                        │   │   │
+│  │ │        ├─ 遍历状态机                                            │   │   │
+│  │ │        ├─ 评估状态机: EvaluateStateMachine()                    │   │   │
+│  │ │        │   ├─ 状态转换处理                                      │   │   │
+│  │ │        │   ├─ 参数更新                                          │   │   │
+│  │ │        │   └─ 播放器设置                                        │   │   │
+│  │ │        ├─ 清理触发器                                            │   │   │
+│  │ │        └─ 设置层权重                                            │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 4. ProcessRootMotionJob() - 根运动处理                         │   │   │
+│  │ │    ├─ 多线程处理根运动                                         │   │   │
+│  │ │    ├─ 计算根运动数据                                           │   │   │
+│  │ │    └─ 同步根运动变换                                           │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 5. FireAnimationEvents() - 动画事件触发                        │   │   │
+│  │ │    ├─ 遍历 AnimatorJob                                         │   │   │
+│  │ │    ├─ 调用 PrepareAnimationEvents()                            │   │   │
+│  │ │    │   ├─ 安全检查: IsInitialized()                            │   │   │
+│  │ │    │   ├─ 时间计算: 当前时间 - 上一帧时间                      │   │   │
+│  │ │    │   ├─ 循环处理: 处理动画循环                               │   │   │
+│  │ │    │   └─ 状态机转换: 处理状态机转换                           │   │   │
+│  │ │    ├─ 调用 AnimationClipPlayable::PrepareAnimationEvents()     │   │   │
+│  │ │    │   ├─ 获取动画剪辑                                         │   │   │
+│  │ │    │   ├─ 计算事件时间                                         │   │   │
+│  │ │    │   ├─ 处理循环和状态机转换                                 │   │   │
+│  │ │    │   └─ 添加到事件列表                                       │   │   │
+│  │ │    └─ 调用 FireAnimationEvents()                               │   │   │
+│  │ │        ├─ 遍历事件列表                                         │   │   │
+│  │ │        ├─ 调用 AnimationClip::FireAnimationEvents()            │   │   │
+│  │ │        │   ├─ 遍历 AnimationClipEventInfo                      │   │   │
+│  │ │        │   ├─ 调用 FireEvent()                                 │   │   │
+│  │ │        │   │   ├─ 获取目标对象                                 │   │   │
+│  │ │        │   │   ├─ 查找方法                                     │   │   │
+│  │ │        │   │   └─ 调用 C# 方法                                 │   │   │
+│  │ │        │   └─ 调用 FireEventTo()                               │   │   │
+│  │ │        └─ 清理事件列表                                         │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 6. FireBehaviours() - 状态机行为触发                          │   │   │
+│  │ │    ├─ 遍历 AnimatorControllerPlayable                          │   │   │
+│  │ │    ├─ 检查状态机行为: HasStateMachineBehaviour()               │   │   │
+│  │ │    ├─ 遍历状态机                                               │   │   │
+│  │ │    ├─ 遍历层                                                   │   │   │
+│  │ │    ├─ 处理当前状态消息                                         │   │   │
+│  │ │    │   ├─ 过滤消息: FilteredMessageId()                       │   │   │
+│  │ │    │   ├─ 获取状态信息: GetAnimatorStateInfo()                 │   │   │
+│  │ │    │   └─ 调用 FireStateBehaviour()                           │   │   │
+│  │ │    │       ├─ 准备参数: ScriptingArguments                    │   │   │
+│  │ │    │       ├─ 查找行为: FindStateBehavioursRange()             │   │   │
+│  │ │    │       ├─ 遍历行为                                         │   │   │
+│  │ │    │       ├─ 获取方法: GetBehaviourMethod()                   │   │   │
+│  │ │    │       └─ 调用 C# 方法: ScriptingInvocation               │   │   │
+│  │ │    ├─ 处理中断状态消息                                         │   │   │
+│  │ │    └─ 处理下一个状态消息                                       │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 7. ApplyOnAnimatorMove() - 应用移动                            │   │   │
+│  │ │    ├─ 清除首次评估标志                                         │   │   │
+│  │ │    ├─ 应用 OnAnimatorMove 回调                                 │   │   │
+│  │ │    └─ 处理不可见 Animator                                      │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │ 第二阶段: doRetargetIKWrite = true                                    │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 1. BuildJobs() - 构建可见 Animator 作业                        │   │   │
+│  │ │    ├─ 只处理可见的 Animator                                    │   │   │
+│  │ │    ├─ 分离人形 Animator                                        │   │   │
+│  │ │    └─ 按层次排序: SortJobsBasedOnHierarchy()                   │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 2. ProcessAnimationsJob() - 动画处理                           │   │   │
+│  │ │    ├─ 多线程处理动画                                           │   │   │
+│  │ │    ├─ 同步 Transform: GlobalXToTRS()                           │   │   │
+│  │ │    └─ 调用 ProcessAnimationsStep()                             │   │   │
+│  │ │        ├─ 准备输入: ProcessInputPrepare()                      │   │   │
+│  │ │        ├─ 处理 PlayableGraph: ProcessPlayableGraph()           │   │   │
+│  │ │        │   ├─ 遍历 WeightedPlayables                          │   │   │
+│  │ │        │   ├─ 处理动画: ProcessAnimation()                     │   │   │
+│  │ │        │   ├─ 混合动画: ProcessAnimationMix()                  │   │   │
+│  │ │        │   └─ 结束处理: ProcessAnimationEnd()                  │   │   │
+│  │ │        └─ 准备输出: ProcessOutputPrepare()                     │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 3. RetargeterJob() - 重定向处理                                │   │   │
+│  │ │    ├─ 多线程处理重定向                                         │   │   │
+│  │ │    ├─ 处理人形重定向                                           │   │   │
+│  │ │    └─ 计算重定向数据                                           │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 4. IKJob() - IK 处理                                           │   │   │
+│  │ │    ├─ 多线程处理 IK                                            │   │   │
+│  │ │    ├─ 默认 IK 处理                                             │   │   │
+│  │ │    └─ 分层 IK 处理                                             │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  │ ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │ │ 5. WriteJob() - 写入属性                                       │   │   │
+│  │ │    └─ 调用 WriteStep()                                         │   │   │
+│  │ │        ├─ 检查写入标志: m_DoWrite                              │   │   │
+│  │ │        ├─ 写入 Transform 属性                                  │   │   │
+│  │ │        │   └─ SetGenericTransformPropertyValuesNoSync()       │   │   │
+│  │ │        │       ├─ 处理位置: kBindTransformPosition             │   │   │
+│  │ │        │       ├─ 处理旋转: kBindTransformRotation             │   │   │
+│  │ │        │       └─ 处理缩放: kBindTransformScale                │   │   │
+│  │ │        ├─ 写入材质属性                                         │   │   │
+│  │ │        │   └─ SetGenericFloatPropertyValues()                  │   │   │
+│  │ │        │       ├─ 处理浮点属性: kBindFloat                     │   │   │
+│  │ │        │       ├─ 处理布尔属性: kBindFloatToBool               │   │   │
+│  │ │        │       ├─ 处理整数属性: kBindFloatToInt                │   │   │
+│  │ │        │       └─ 处理材质属性: kRendererMaterialPropertyBinding │   │   │
+│  │ │        │           ├─ 获取材质属性                             │   │   │
+│  │ │        │           ├─ 设置属性值                               │   │   │
+│  │ │        │           └─ 更新渲染器                               │   │   │
+│  │ │        └─ 更新骨骼姿态                                         │   │   │
+│  │ └─────────────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+~~~
