@@ -1,3 +1,4 @@
+[animator.md](https://github.com/user-attachments/files/22318799/animator.md)
 # Animator
 
 ---
@@ -608,7 +609,7 @@ if (apStateMachineInput->m_StateMachineBehaviourPlayer != 0 && apStateMachineInp
 5. m_UpdateMode (UpdateMode: kNormal/kAnimatePhysics/kUnscaledTime): 决定使用哪条时间线（GameTime/FixedTime/Unscaled）。
 6. m_CullingMode (CullingMode: kCullNone/kCullRetargetIKWrite/kCullAll): 可见性剔除策略，控制是否评估、是否写回变换/IK。
 7. m_Visible (bool): 可见性缓存，配合渲染器集合做剔除。
-8. m_AnimatorActivePasses (int, 位掩码): 当前正在执行的 Animator 阶段（如 OnAnimatorMove、IK、采样、写属性等）
+8. m_AnimatorActivePasses (int, 位掩码): 当前正在执行的 Animator 阶段（如 OnAnimatorMove、IK、采样、写属性等）用位运算记录每一位当前在干什么
 9. m_Speed (float): 全局播放速度缩放。
 10. m_ApplyRootMotion (bool): 是否应用根运动到 Transform
 11. m_LinearVelocityBlending (bool): 线速度混合开关，影响混合时速度插值方式。
@@ -633,7 +634,7 @@ if (apStateMachineInput->m_StateMachineBehaviourPlayer != 0 && apStateMachineInp
 30. m_BoundPlayables/m_PlayableNodes: 与 Animator 绑定的 playable 节点集合，生命周期统一管理。
 31. m_RecorderMode (AnimatorRecorderMode): eRecord/ePlayback/eOffline。
 32. m_PlaybackDeltaTime/m_PlaybackTime: 回放步进与当前时间。
-33. m_FireEvents (bool): 是否触发 AnimationEvent。
+33. m_FireEvents (bool): 是否触发 AnimationEvent。（c#animator中的 fireEvents属性 默认为true）
 34. m_KeepAnimatorControllerStateOnDisable (bool): 组件禁用时是否保留控制器状态。
 35. m_IsInitialized/m_HasTransformHierarchy/m_AllowConstantClipSamplingOptimization: 初始化与优化开关。
 36. m_ContainedRenderers/m_RenderersToClear: 受影响渲染器列表与待清列表；配合可见性剔除与重绑定。
@@ -643,24 +644,69 @@ if (apStateMachineInput->m_StateMachineBehaviourPlayer != 0 && apStateMachineInp
 
 方法： 
 1. UpdateWithDelta 每帧入口（或物理步），驱动可播放图评估与整条 Animator 管线
+    获取 PlayableGraph 实例 更新图形帧ID，标记新帧开始 准备图形评估，设置时间参数 再次更新帧ID，强制重新评估 控制器更新调用UpdateAvatars (UpdateAvatars)这个函数实际上就是调用一个设置transform位置的函数 SetGenericTransformPropertyValuesNoSync 
 2. EvaluateController 在图评估前后做控制器级准备与收尾（参数推送、层处理等）
-3. Prepare(): 本帧准备阶段的总控（检查初始化、脏数据、是否需要评估等）
-4. SetPrepareStage(): 将当前 Animator 绑定到正确的 PlayerLoop 阶段（Update/FixedUpdate 开始段）
-5. OnPlayableBind/OnPlayableUnbind/OnGraphTopologyChanged: 与 PlayableOutput 生命周期/拓扑变化联动，重建端口和缓存。
-6. InitStep(AnimatorJob&, float deltaTime): 本帧初始化步骤，构造本帧 AnimatorJob、推送权重/速度、准备输入缓冲
-7. ProcessAnimationsStep(AnimatorJob&): 评估动画层/混合树，写入骨骼姿势流与属性流的中间缓冲
-8. WriteStep(AnimatorJob&): 写回阶段，骨骼矩阵/Transform/属性真正落地到场景
-9. WriteProperties(float deltaTime, float realDeltaTime): 属性曲线（非 Transform）写回（例如材料/自定义浮点属性等）
-10. FireAnimationEvents(AnimatorJob&): 逐条触发 AnimationEvent，反射到脚本方法（Animator 路径）
-11. PrepareAnimationEvents(AnimatorJob&): 从已采样片段汇总本帧事件窗口
-12. GetDeltaPosition()/GetDeltaRotation()/GetVelocity()/GetAngularVelocity(): 根运动/速度查询接口，用于上层控制器/物理
-13. Rebind(bool writeDefaultValues): 重绑定（重建 Avatar/Bindings/Playable 内存、恢复默认值），切控器/Avatar/装配变化时使用。
-14. SetRuntimeAnimatorController(RuntimeAnimatorController): 切换控制器，创建或替换 AnimatorControllerPlayable，必要时 Rebind/重建图。<br>
+   EvaluateController 函数是 Animator 控制器评估的核心函数，负责更新和评估 AnimatorController 的状态机，处理状态转换、参数更新和动画播放逻辑。<br>
+   就是循环调用调用 AnimatorControllerPlayable::UpdateGraph函数。
+3. CreateObject()
+	- 准备环境准备
+    ~~~ c++
+	VALIDATE_CAN_DISABLE_ANIMATOR();  // 验证是否可以禁用 Animator
+	if (!IsActive()) return;          // 检查是否激活
+	ClearWarning();                   // 清理警告信息
+	PROFILER_AUTO(gAnimatorInitialize, this);  // 性能分析标记
+	SET_ALLOC_OWNER(GetMemoryLabel());         // 设置内存分配器
+	ClearObject();                    // 清理旧对象
+	~~~
+	- InitializeAvatar(); 从 m_Avatar 获取 Avatar 常量 将 Animator 添加为 Avatar 的用户 
+	- CreateInternalPlayableGraph 创建 AnimationPlayableOutput 并设置目标 Animator 配置播放图的时间更新模式  调用 SetPrepareStage() 设置更新阶段
+	- CreateInternalControllerPlayable 从 GetRuntimeAnimatorController() 获取控制器创建 AnimatorControllerPlayable 实例 将 Animator 添加为控制器的用户 如果正在播放，则启动播放图
+	- CreateBindings 调用 SetupAnimationClipsCache() 调用 SetupBindingsDataSet() 配置绑定 清理之前的 Avatar 输出数据 调用 SetupPlayableWorkspace()
+	- CreatePlayableMemory 为播放器系统分配必要的内存 设置播放器相关的数据结构 
+	- CollectAnimatedRenderers 在场景中查找需要动画的渲染器 将渲染器与动画属性建立绑定关系
+4. Prepare(): 本帧准备阶段的总控（检查初始化、脏数据、是否需要评估等）<br>
+   Prepare调用时机 <br>
+   - 单个 Animator 更新时
+   - 控制器评估时
+   - BuildJobs 函数中
+   - 动画采样时
+   - 状态查询时
+5. SetPrepareStage(): 将当前 Animator 绑定到正确的 PlayerLoop 阶段（Update/FixedUpdate 开始段）
+6. OnPlayableBind/OnPlayableUnbind/OnGraphTopologyChanged: 与 PlayableOutput 生命周期/拓扑变化联动，重建端口和缓存。
+7. InitStep(AnimatorJob&, float deltaTime): 本帧初始化步骤，构造本帧 AnimatorJob、推送权重/速度、准备输入缓冲<br>
+	InitStep 函数是动画更新流程中的初始化步骤，负责设置动画系统的基础参数和状态，为后续的动画处理做准备<br>
+	- 如果是回放 调用 SetPlaybackTimeInternal 设置回放时间 否则 将 deltaTime 设置到 Avatar 输入数据中
+	- 设置动画混合时的线性速度处理方式
+8. ProcessAnimationsStep(AnimatorJob&): 评估动画层/混合树，写入骨骼姿势流与属性流的中间缓冲
+9.  WriteStep(AnimatorJob&): 写回阶段，骨骼矩阵/Transform/属性真正落地到场景
+10. WriteProperties(float deltaTime, float realDeltaTime): 属性曲线（非 Transform）写回（例如材料/自定义浮点属性等）
+11. FireAnimationEvents(AnimatorJob&): 逐条触发 AnimationEvent，反射到脚本方法（Animator 路径）<br>
+	FireAnimationEvents : 
+	- 检查是否已经在执行事件触发过程 防止在事件触发过程中重复准备事件 if (m_AnimatorActivePasses & kFiringEvents) return; 解释一下这句话 m_AnimatorActivePasses 在初始化时位0 他的每一位分别记录了 
+	~~~ csharp
+	enum AnimatorPass
+	{
+	    kAnimatorPassNone = 1 << 0,//无特定阶段
+	    kOnAnimatorMove = 1 << 1,// OnAnimatorMove 回调阶段
+	    kOnAnimatorIK = 1 << 2,// OnAnimatorIK 回调阶段  
+	    kFiringEvents = 1 << 3,// 触发动画事件阶段
+	    kWritingFloatPropertyValues = 1 << 4,// 写入浮点属性值阶段
+	    kSampling = 1 << 5,// 采样阶段
+	    kWritingDisallowed = 1 << 6// 禁止写入阶段
+	};
+	~~~
+	- 设置m_AnimatorActivePasses当前状态 如果当前设置可以触发动画 （c#animator中的 fireEvents属性 ）
+	- 遍历所有待触发的动画事件信息 调用 AnimationClip::FireAnimationEvents 来实际触发事件 清空并释放临时事件信息的内存
+12.  PrepareAnimationEvents(AnimatorJob&): 从已采样片段汇总本帧事件窗口
+	- 和FireAnimationEvents 一样先进行检查 
+	- 遍历所有播放器 调用PrepareAnimationEvents
+13.   Rebind(bool writeDefaultValues): 重绑定（重建 Avatar/Bindings/Playable 内存、恢复默认值），切控器/Avatar/装配变化时使用。
+14.   SetRuntimeAnimatorController(RuntimeAnimatorController): 切换控制器，创建或替换 AnimatorControllerPlayable，必要时 Rebind/重建图。<br>
 C# 层 animator.runtimeAnimatorController = x 代码/资源热更时切控制器 编辑器域重载、Prefab 替换、场景载入时重设引用 会调用<br>
 可能触发一次完整的图与内存重建（可见卡顿点，应在非关键帧/加载阶段调用）<br>
 参数集合、层数、SMB、事件、曲线绑定都会随控制器变化而刷新<br>
 若更换为 AOC（OverrideController），会沿用底层 Controller 的图结构，但替换片段映射，并通知 UI 刷新<br>
-1.  GotoState/GotoStateInFixedTime: 强制跳转到某状态（归一化时间或固定时间），支持过渡时长/进度设置。<br>
+15.  GotoState/GotoStateInFixedTime: 强制跳转到某状态（归一化时间或固定时间），支持过渡时长/进度设置。<br>
 做了什么 ： <br>
 - 参数与层/状态校验：ValidateGoToState(layerIndex, stateId)
 - 处理特殊 timeOffset 若传入 -inf 且当前不在过渡，检查当前状态是否已是目标；是则直接 return 否则将 timeOffset 设为 0，从头开始
@@ -674,4 +720,60 @@ inline void CrossFade(Animator* self, int stateHashName, float normalizedTransit
     self->GotoState(layer, stateHashName, normalizedTimeOffset, normalizedTransitionDuration, normalizedTransitionTime);
 }
 ~~~
+16.  BuildJobs(const PlayableOutputPtrArray& outputs, AnimatorJobs& animatorJobs, AnimatorJobs* humanoidJobs, dynamic_array<bool>* shouldFireEvents, dynamic_array<bool>* shouldFireSMBs, bool FKPass, bool updateGraph) <br>
+介绍一下这个函数的几个参数 outputs：来自 PlayableOutputPtrArray，包含所有需要处理的动画输出  animatorJobs：空的 AnimatorJobs 数组，用于存储构建的作业 humanoidJobs：可选的 AnimatorJobs 数组，专门用于人形动画 shouldFireEvents：布尔数组，标记哪些 Animator 需要触发事件 shouldFireSMBs：布尔数组，标记哪些 Animator 需要触发状态机行为  FKPass：布尔值，表示是否为前向运动学通道 updateGraph：布尔值，表示是否需要更新图形<br>
+- 遍历所有传入的动画输出 验证输出类型是否为动画类型 验证播放器存在 验证目标 Animator 存在 检查 Animator 是否运行 检查是否应该添加（可见性检查）
+- 多播放器处理 查找已存在的 AnimatorJob  添加新的播放器到现有作业
+- 创建新的 AnimatorJob 获取transform变换访问权限 创建 AnimatorJob 添加到作业列表
+- 设置事件和状态机行为标志
+- 人形动画特殊处理<br>
+介绍下动画到底是怎么改变transform的
+~~~
+Unity 更新循环
+    ↓
+动画数据输入
+    ↓
+UpdateWithDelta() [主入口]
+    ↓
+UpdateAvatars() [协调器]
+    ↓
+ProcessAnimationsJob() [多线程处理]
+    ↓
+ProcessAnimationsStep() [动画计算]
+    ↓
+ProcessPlayableGraph() [图形处理]
+    ↓
+WriteStep() [属性写入]
+    ├─ Transform 属性 → SetGenericTransformPropertyValuesNoSync()
+    └─ 材质属性 → SetGenericFloatPropertyValues()
+        └─ SetBoundCurveFloatValue() → 实际写入目标对象
+~~~
+---
+
+## AnimatorJob
+AnimatorJob 是 Unity 动画系统中一个重要的数据结构，用于封装单个 Animator 的动画处理任务。它是动画更新循环中的核心工作单元。<br>
+属性 ： 
+1. m_RootTransformAccess 提供对根变换（Root Transform）的访问权限
+2. m_SystemMask 标识哪些变换系统需要被通知变换更改
+3. m_Animator 指向当前作业关联的 Animator 组件
+4. m_Playables 存储所有关联的动画播放器
+5. AnimationClipEventInfos m_TempEventInfos 存储需要触发的动画事件信息
+~~~ csharp
+struct AnimationClipEventInfo
+{
+    AnimationClip*      m_AnimationClip;  // 动画片段
+    float               m_CurrenTime;     // 当前时间
+    float               m_LastTime;       // 上次时间
+    AnimatorStateInfo   m_StateInfo;      // 状态信息
+    AnimatorClipInfo    m_ClipInfo;       // 片段信息
+    float               m_PlaybackSpeed;  // 播放速度
+    bool                m_LoopLastTime;   // 是否循环最后时间
+};
+~~~
+6. m_AvatarDataSet 存储角色动画相关的数据
+7. m_BindingsDataSet 存储动画属性绑定信息
+8. m_PlayableConstant 存储动画播放器评估过程中需要的常量数据
+9. m_PlayableInput 存储动画播放器评估过程中的输入数据
+
+---
 
