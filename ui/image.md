@@ -66,3 +66,10 @@ img.alphaHitTestMinimumThreshold = 0f; // <=0 都等效于“总是命中”
 
 
 
+
+#RawImage
+简单说下区别吧 
+RawImage是Unity UI系统中用于直接显示纹理(Texture2D)的组件，与Image组件的主要区别是 Image：只能显示Sprite（图集的一部分） RawImage：可以直接显示任何Texture2D<br>
+RawImage 有单独的drawcall image如果是图集可以减少drawcall<br>
+image 更适合处理ui元素 而 rawimage更适合处理 背景临时图形 rt图等<br>
+内存上 rawimage消耗的更多 基础UI开销 + 纹理内存 纹理内存 = width × height × 4字节(RGBA)
